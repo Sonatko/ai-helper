@@ -7,15 +7,22 @@ import { getCurrentWindow, PhysicalPosition } from "@tauri-apps/api/window";
  * Implements intuitive window behavior:
  * 1. Immediate focus into the input field for instant keyboard typing.
  * 2. Middle-mouse-button (wheel hold & drag) custom window repositioning using Pointer Events.
+ * 3. Escape key handler: clears query and hides the window instantly.
  */
 window.addEventListener("DOMContentLoaded", () => {
   const queryInput = document.getElementById("query-input") as HTMLInputElement | null;
   const appWindow = getCurrentWindow();
 
-  // 1. Auto-focus the input field on launch
-  if (queryInput) {
-    queryInput.focus();
-  }
+  // 1. Auto-focus the input field on initial load and every time the window regains focus
+  const focusInput = () => {
+    if (queryInput) {
+      queryInput.focus();
+      queryInput.select();
+    }
+  };
+
+  focusInput();
+  window.addEventListener("focus", focusInput);
 
   // 2. Middle-click (wheel hold & move) window dragging
   let isDragging = false;
@@ -29,7 +36,6 @@ window.addEventListener("DOMContentLoaded", () => {
       // 1 = Middle mouse button (wheel press)
       event.preventDefault();
 
-      // Capture pointer events so dragging stays active even if cursor moves fast
       const target = event.target as HTMLElement | null;
       if (target && target.setPointerCapture) {
         try {
@@ -74,12 +80,16 @@ window.addEventListener("DOMContentLoaded", () => {
   window.addEventListener("pointerup", stopDrag);
   window.addEventListener("pointercancel", stopDrag);
 
-  // 3. Escape key to clear or handle dismissal
+  // 3. Escape key: clear input and instantly hide the window
   window.addEventListener("keydown", (event: KeyboardEvent) => {
     if (event.key === "Escape") {
-      if (queryInput && queryInput.value.length > 0) {
+      event.preventDefault();
+      if (queryInput) {
         queryInput.value = "";
       }
+      appWindow.hide().catch((err) => {
+        console.error("[AI Helper] Failed to hide window on Escape:", err);
+      });
     }
   });
 });
