@@ -1,0 +1,25 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+
+# Dependencies and build artifacts
+node_modules
+frontend/node_modules
+frontend/dist
+frontend/dist-ssr
+src-tauri/target
+scratch
+
+# Environment and Secrets
+.env
+.env.*
+!.env.example
+
+# IDE & OS
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+Thumbs.db

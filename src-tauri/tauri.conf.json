@@ -1,0 +1,37 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "AI Helper",
+  "version": "0.1.0",
+  "identifier": "com.aihelper.desktop",
+  "build": {
+    "beforeDevCommand": "npm --prefix frontend run dev",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "npm --prefix frontend run build",
+    "frontendDist": "../frontend/dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "AI Helper",
+        "label": "main",
+        "width": 680,
+        "height": 60,
+        "resizable": false,
+        "center": true,
+        "visible": true,
+        "decorations": false,
+        "transparent": false,
+        "alwaysOnTop": true,
+        "shadow": true,
+        "skipTaskbar": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": false
+  }
+}
+
