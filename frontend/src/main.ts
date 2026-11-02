@@ -27,6 +27,14 @@ export interface WindowPassport {
 }
 
 /**
+ * Captured user context content (text or in-memory screenshot).
+ */
+export type CapturedContent =
+  | { type: "Text"; payload: string }
+  | { type: "Screenshot"; payload: { base64: string; width: number; height: number } }
+  | { type: "Empty" };
+
+/**
  * Main TypeScript entry point for the AI Helper desktop window.
  *
  * Why:
@@ -47,7 +55,7 @@ window.addEventListener("DOMContentLoaded", () => {
       queryInput.select();
     }
 
-    // Query the context passport captured by the Win32 backend before the window was shown
+    // Query the context passport and captured content
     try {
       const passport = await invoke<WindowPassport | null>("get_last_passport");
       if (passport) {
@@ -55,8 +63,19 @@ window.addEventListener("DOMContentLoaded", () => {
           `[AI Helper UI] Active Context: ${passport.app_name} (${passport.process_name}) | "${passport.window_title}"`
         );
       }
+
+      const content = await invoke<CapturedContent | null>("get_last_content");
+      if (content) {
+        if (content.type === "Text") {
+          console.log(`[AI Helper UI] Captured Text (${content.payload.length} chars):`, content.payload);
+        } else if (content.type === "Screenshot") {
+          console.log(
+            `[AI Helper UI] Captured Window Screenshot: ${content.payload.width}x${content.payload.height} px`
+          );
+        }
+      }
     } catch (err) {
-      console.error("[AI Helper UI] Failed to retrieve window passport:", err);
+      console.error("[AI Helper UI] Failed to retrieve context:", err);
     }
   };
 
