@@ -9,8 +9,9 @@ use std::io::Cursor;
 use windows::Win32::Foundation::HGLOBAL;
 #[cfg(windows)]
 use windows::Win32::Graphics::Gdi::{
-    BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDIBits, GetDC,
-    ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, SRCCOPY,
+    CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDIBits, GetDC,
+    ReleaseDC, SelectObject, SetStretchBltMode, StretchBlt, BITMAPINFO, BITMAPINFOHEADER, BI_RGB,
+    DIB_RGB_COLORS, HALFTONE, SRCCOPY,
 };
 #[cfg(windows)]
 use windows::Win32::System::DataExchange::{
@@ -21,17 +22,17 @@ use windows::Win32::System::Memory::{GlobalLock, GlobalUnlock};
 #[cfg(windows)]
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
-    VK_C, VK_CONTROL,
+    VK_CONTROL, VK_INSERT,
 };
 
-use crate::system::passport::WindowPassport;
+use crate::system::passport::WindowRect;
 
 /// The captured user content prepared for the AI model.
 ///
 /// Why:
 /// Formulates the "Content" element of the Golden Context Triad:
 /// Either raw highlighted text (lightweight and 100% accurate)
-/// OR a pixel-perfect in-memory screenshot of the focused window.
+/// OR an optimized in-memory screenshot of the focused window.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "payload")]
 pub enum CapturedContent {
@@ -47,24 +48,36 @@ pub enum CapturedContent {
     Empty,
 }
 
-/// Captures a screen rectangle using Win32 GDI BitBlt and compresses it to JPEG in RAM.
+/// Raw captured screen buffer extracted in 1-2 ms before the window opens.
+pub struct RawScreenCapture {
+    pub bgra_bytes: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Ultra-fast 1-2 ms hardware screen capture using GDI StretchBlt.
 ///
 /// Why:
-/// Uses the desktop DC (GetDC(None)) to capture the hardware-accelerated DWM composition
-/// of modern apps (VS Code, Chrome, etc.) avoiding the dreaded "black screen" bug.
+/// Downscales large 4K / 1440p displays to a maximum width of 1280px in GPU/DWM hardware,
+/// reducing pixel memory by 4x to 8x and eliminating UI latency.
 #[cfg(windows)]
-pub fn capture_rect_screenshot(
-    left: i32,
-    top: i32,
-    width: i32,
-    height: i32,
-) -> Option<(String, u32, u32)> {
-    if width <= 0 || height <= 0 {
+pub fn fast_capture_raw_screen(rect: &WindowRect) -> Option<RawScreenCapture> {
+    let orig_w = rect.width;
+    let orig_h = rect.height;
+    if orig_w <= 0 || orig_h <= 0 {
         return None;
     }
 
+    // AI vision models (Gemini / Claude) do not need 4K uncompressed images.
+    // Downscaling to max 1280px width preserves code readability while making capture instant.
+    let (target_w, target_h) = if orig_w > 1280 {
+        let scale = 1280.0 / orig_w as f32;
+        (1280, (orig_h as f32 * scale).round() as i32)
+    } else {
+        (orig_w, orig_h)
+    };
+
     unsafe {
-        // Step 1: Query the Desktop Device Context (contains all composited GPU surfaces)
         let hdc_screen = GetDC(None);
         if hdc_screen.0.is_null() {
             return None;
@@ -76,8 +89,7 @@ pub fn capture_rect_screenshot(
             return None;
         }
 
-        // Step 2: Create a compatible memory bitmap matching target window bounds
-        let hbitmap = CreateCompatibleBitmap(hdc_screen, width, height);
+        let hbitmap = CreateCompatibleBitmap(hdc_screen, target_w, target_h);
         if hbitmap.0.is_null() {
             let _ = DeleteDC(hdc_mem);
             let _ = ReleaseDC(None, hdc_screen);
@@ -86,20 +98,23 @@ pub fn capture_rect_screenshot(
 
         let old_obj = SelectObject(hdc_mem, hbitmap.into());
 
-        // Step 3: Fast 2 ms hardware block transfer from screen DC to memory DC
-        let blt_res = BitBlt(
+        // High quality hardware antialiased downsampling via DWM/GDI in ~1 ms
+        let _ = SetStretchBltMode(hdc_mem, HALFTONE);
+        let blt_res = StretchBlt(
             hdc_mem,
             0,
             0,
-            width,
-            height,
+            target_w,
+            target_h,
             Some(hdc_screen),
-            left,
-            top,
+            rect.left,
+            rect.top,
+            orig_w,
+            orig_h,
             SRCCOPY,
         );
 
-        if blt_res.is_err() {
+        if !blt_res.as_bool() {
             let _ = SelectObject(hdc_mem, old_obj);
             let _ = DeleteObject(hbitmap.into());
             let _ = DeleteDC(hdc_mem);
@@ -107,12 +122,11 @@ pub fn capture_rect_screenshot(
             return None;
         }
 
-        // Step 4: Extract raw BGRA pixels using GetDIBits with negative height for top-down layout
         let mut bmi = BITMAPINFO {
             bmiHeader: BITMAPINFOHEADER {
                 biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
-                biWidth: width,
-                biHeight: -height,
+                biWidth: target_w,
+                biHeight: -target_h,
                 biPlanes: 1,
                 biBitCount: 32,
                 biCompression: BI_RGB.0,
@@ -121,18 +135,18 @@ pub fn capture_rect_screenshot(
             ..Default::default()
         };
 
-        let mut raw_pixels = vec![0u8; (width * height * 4) as usize];
+        let mut raw_pixels = vec![0u8; (target_w * target_h * 4) as usize];
         let lines = GetDIBits(
             hdc_mem,
             hbitmap,
             0,
-            height as u32,
+            target_h as u32,
             Some(raw_pixels.as_mut_ptr() as *mut _),
             &mut bmi,
             DIB_RGB_COLORS,
         );
 
-        // Cleanup GDI objects immediately to prevent resource leakage
+        // Immediately release all GDI handles to free system resources
         let _ = SelectObject(hdc_mem, old_obj);
         let _ = DeleteObject(hbitmap.into());
         let _ = DeleteDC(hdc_mem);
@@ -142,49 +156,89 @@ pub fn capture_rect_screenshot(
             return None;
         }
 
-        // Step 5: Convert Windows BGRA to standard RGB for JPEG encoding
-        let mut rgb_pixels = Vec::with_capacity((width * height * 3) as usize);
-        for chunk in raw_pixels.chunks_exact(4) {
-            rgb_pixels.push(chunk[2]); // R
-            rgb_pixels.push(chunk[1]); // G
-            rgb_pixels.push(chunk[0]); // B
-        }
-
-        // Step 6: Compress into JPEG in memory (Quality 80: ~150KB, ~10ms encoding)
-        let mut jpeg_bytes = Cursor::new(Vec::new());
-        let mut encoder = JpegEncoder::new_with_quality(&mut jpeg_bytes, 80);
-        if encoder
-            .encode(
-                &rgb_pixels,
-                width as u32,
-                height as u32,
-                ExtendedColorType::Rgb8,
-            )
-            .is_ok()
-        {
-            let base64_str = BASE64.encode(jpeg_bytes.into_inner());
-            let data_url = format!("data:image/jpeg;base64,{}", base64_str);
-            Some((data_url, width as u32, height as u32))
-        } else {
-            None
-        }
+        Some(RawScreenCapture {
+            bgra_bytes: raw_pixels,
+            width: target_w as u32,
+            height: target_h as u32,
+        })
     }
 }
 
-/// Fallback for non-Windows platforms.
 #[cfg(not(windows))]
-pub fn capture_rect_screenshot(
-    _left: i32,
-    _top: i32,
-    _width: i32,
-    _height: i32,
-) -> Option<(String, u32, u32)> {
+pub fn fast_capture_raw_screen(_rect: &WindowRect) -> Option<RawScreenCapture> {
     None
+}
+
+/// Dispatches an asynchronous Ctrl+Insert copy command without sleeping.
+///
+/// Returns the clipboard sequence number prior to the command.
+#[cfg(windows)]
+pub fn dispatch_safe_copy() -> u32 {
+    unsafe {
+        let seq = GetClipboardSequenceNumber();
+        let inputs = [
+            INPUT {
+                r#type: INPUT_KEYBOARD,
+                Anonymous: INPUT_0 {
+                    ki: KEYBDINPUT {
+                        wVk: VK_CONTROL,
+                        wScan: 0,
+                        dwFlags: KEYBD_EVENT_FLAGS(0),
+                        time: 0,
+                        dwExtraInfo: 0,
+                    },
+                },
+            },
+            INPUT {
+                r#type: INPUT_KEYBOARD,
+                Anonymous: INPUT_0 {
+                    ki: KEYBDINPUT {
+                        wVk: VK_INSERT,
+                        wScan: 0,
+                        dwFlags: KEYBD_EVENT_FLAGS(0),
+                        time: 0,
+                        dwExtraInfo: 0,
+                    },
+                },
+            },
+            INPUT {
+                r#type: INPUT_KEYBOARD,
+                Anonymous: INPUT_0 {
+                    ki: KEYBDINPUT {
+                        wVk: VK_INSERT,
+                        wScan: 0,
+                        dwFlags: KEYEVENTF_KEYUP,
+                        time: 0,
+                        dwExtraInfo: 0,
+                    },
+                },
+            },
+            INPUT {
+                r#type: INPUT_KEYBOARD,
+                Anonymous: INPUT_0 {
+                    ki: KEYBDINPUT {
+                        wVk: VK_CONTROL,
+                        wScan: 0,
+                        dwFlags: KEYEVENTF_KEYUP,
+                        time: 0,
+                        dwExtraInfo: 0,
+                    },
+                },
+            },
+        ];
+        SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
+        seq
+    }
+}
+
+#[cfg(not(windows))]
+pub fn dispatch_safe_copy() -> u32 {
+    0
 }
 
 /// Reads current UTF-16 text from the Windows system clipboard if available.
 #[cfg(windows)]
-fn read_clipboard_text() -> Option<String> {
+pub fn read_clipboard_text() -> Option<String> {
     unsafe {
         if OpenClipboard(None).is_ok() {
             // CF_UNICODETEXT = 13
@@ -217,115 +271,71 @@ fn read_clipboard_text() -> Option<String> {
     }
 }
 
-/// Attempts to capture highlighted text from the active foreground window.
-///
-/// Why:
-/// Uses the battle-tested GoldenDict/Text-Grab pattern: checks GetClipboardSequenceNumber,
-/// pulses SendInput(Ctrl+C), and checks if the sequence counter increased.
-#[cfg(windows)]
-pub fn try_capture_selected_text() -> Option<String> {
-    unsafe {
-        let seq_before = GetClipboardSequenceNumber();
-
-        // Synthesize Ctrl+C key combination
-        let inputs = [
-            // Ctrl down
-            INPUT {
-                r#type: INPUT_KEYBOARD,
-                Anonymous: INPUT_0 {
-                    ki: KEYBDINPUT {
-                        wVk: VK_CONTROL,
-                        wScan: 0,
-                        dwFlags: KEYBD_EVENT_FLAGS(0),
-                        time: 0,
-                        dwExtraInfo: 0,
-                    },
-                },
-            },
-            // C down
-            INPUT {
-                r#type: INPUT_KEYBOARD,
-                Anonymous: INPUT_0 {
-                    ki: KEYBDINPUT {
-                        wVk: VK_C,
-                        wScan: 0,
-                        dwFlags: KEYBD_EVENT_FLAGS(0),
-                        time: 0,
-                        dwExtraInfo: 0,
-                    },
-                },
-            },
-            // C up
-            INPUT {
-                r#type: INPUT_KEYBOARD,
-                Anonymous: INPUT_0 {
-                    ki: KEYBDINPUT {
-                        wVk: VK_C,
-                        wScan: 0,
-                        dwFlags: KEYEVENTF_KEYUP,
-                        time: 0,
-                        dwExtraInfo: 0,
-                    },
-                },
-            },
-            // Ctrl up
-            INPUT {
-                r#type: INPUT_KEYBOARD,
-                Anonymous: INPUT_0 {
-                    ki: KEYBDINPUT {
-                        wVk: VK_CONTROL,
-                        wScan: 0,
-                        dwFlags: KEYEVENTF_KEYUP,
-                        time: 0,
-                        dwExtraInfo: 0,
-                    },
-                },
-            },
-        ];
-
-        SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
-
-        // Sleep 35 ms allowing Electron/browser/IDE message pump to process Ctrl+C
-        std::thread::sleep(std::time::Duration::from_millis(35));
-
-        let seq_after = GetClipboardSequenceNumber();
-        if seq_after != seq_before {
-            read_clipboard_text()
-        } else {
-            None
-        }
-    }
-}
-
-/// Fallback for non-Windows platforms.
 #[cfg(not(windows))]
-pub fn try_capture_selected_text() -> Option<String> {
+pub fn read_clipboard_text() -> Option<String> {
     None
 }
 
-/// Unified context capture function.
-///
-/// Why:
-/// Evaluates whether text was highlighted; if so, returns text immediately.
-/// If no text was highlighted, falls back to a sub-millisecond BitBlt screenshot of the window.
-pub fn capture_active_content(passport: &Option<WindowPassport>) -> CapturedContent {
-    // 1. Try highlighted text first
-    if let Some(text) = try_capture_selected_text() {
-        return CapturedContent::Text(text);
+/// Converts raw BGRA pixels to compressed JPEG Data URL in RAM.
+pub fn encode_jpeg_base64(raw_bgra: &[u8], width: u32, height: u32) -> Option<String> {
+    let mut rgb_pixels = Vec::with_capacity((width * height * 3) as usize);
+    for chunk in raw_bgra.chunks_exact(4) {
+        rgb_pixels.push(chunk[2]); // R
+        rgb_pixels.push(chunk[1]); // G
+        rgb_pixels.push(chunk[0]); // B
     }
 
-    // 2. Fallback to window screenshot if passport bounds are available
-    if let Some(ref p) = passport {
-        if p.rect.width > 0 && p.rect.height > 0 {
-            if let Some((base64, width, height)) =
-                capture_rect_screenshot(p.rect.left, p.rect.top, p.rect.width, p.rect.height)
-            {
-                return CapturedContent::Screenshot {
-                    base64,
-                    width,
-                    height,
-                };
+    let mut jpeg_bytes = Cursor::new(Vec::new());
+    let mut encoder = JpegEncoder::new_with_quality(&mut jpeg_bytes, 80);
+    if encoder
+        .encode(&rgb_pixels, width, height, ExtendedColorType::Rgb8)
+        .is_ok()
+    {
+        let base64_str = BASE64.encode(jpeg_bytes.into_inner());
+        Some(format!("data:image/jpeg;base64,{}", base64_str))
+    } else {
+        None
+    }
+}
+
+/// Finalizes context capture in a background worker thread.
+///
+/// Why:
+/// Runs asynchronously while the user sees the window open instantly.
+/// Checks whether selected text was copied; if not, encodes the preserved screen capture to JPEG.
+pub fn finalize_capture(
+    raw_screen: Option<RawScreenCapture>,
+    seq_before: u32,
+    force_text: bool,
+) -> CapturedContent {
+    // 1. Give target app message queue ~25 ms to complete copy
+    std::thread::sleep(std::time::Duration::from_millis(25));
+
+    #[cfg(windows)]
+    {
+        let seq_after = unsafe { GetClipboardSequenceNumber() };
+        if seq_after != seq_before {
+            if let Some(text) = read_clipboard_text() {
+                return CapturedContent::Text(text);
             }
+        }
+    }
+
+    // 2. If force_text (Alt+F7) and clipboard already had text, check clipboard
+    if force_text {
+        if let Some(text) = read_clipboard_text() {
+            return CapturedContent::Text(text);
+        }
+    }
+
+    // 3. Fallback to optimized in-memory screenshot
+    if let Some(screen) = raw_screen {
+        if let Some(base64) = encode_jpeg_base64(&screen.bgra_bytes, screen.width, screen.height) {
+            return CapturedContent::Screenshot {
+                base64,
+                width: screen.width,
+                height: screen.height,
+            };
         }
     }
 

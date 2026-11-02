@@ -24,6 +24,18 @@
         "alwaysOnTop": true,
         "shadow": true,
         "skipTaskbar": false
+      },
+      {
+        "title": "Настройки AI Helper",
+        "label": "settings",
+        "url": "settings.html",
+        "width": 580,
+        "height": 640,
+        "resizable": true,
+        "center": true,
+        "visible": false,
+        "decorations": true,
+        "alwaysOnTop": true
       }
     ],
     "security": {

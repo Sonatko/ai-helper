@@ -14,31 +14,48 @@
           type="text"
           id="query-input"
           class="query-input"
-          placeholder="Задайте вопрос..."
+          placeholder="Спроси что угодно... (Enter для отправки)"
           autofocus
           autocomplete="off"
           spellcheck="false"
         />
-        <div id="badge-pill" class="badge-pill hidden"></div>
+        <div class="capsule-actions">
+          <div id="badge-pill" class="badge-pill hidden"></div>
+          <button id="capsule-new-btn" class="capsule-btn" title="Новый запрос (Ctrl+N)">+ Новый</button>
+          <button id="capsule-history-btn" class="capsule-circle-btn" title="История запросов (Ctrl+H)">🕒</button>
+        </div>
       </header>
 
-      <!-- Expandable Response Panel: Revealed on Enter -->
-      <section id="response-panel" class="response-panel hidden">
-        <div class="divider"></div>
+      <div class="divider"></div>
+
+      <!-- Mode 1: History Panel (Dedicated Full Expanded View) -->
+      <section id="history-panel" class="content-panel hidden">
+        <div class="panel-header">
+          <span>🕒 История предыдущих диалогов</span>
+          <button id="clear-history-btn" class="text-btn">Очистить всё</button>
+        </div>
+        <div id="history-list" class="history-list"></div>
+        <footer class="panel-footer">
+          <span style="color: #64748b;">Кликните диалог для просмотра</span>
+          <span class="esc-hint">Esc — закрыть</span>
+        </footer>
+      </section>
+
+      <!-- Mode 2: Response Panel (Dedicated Full Expanded View) -->
+      <section id="response-panel" class="content-panel hidden">
         <div id="response-content" class="response-content"></div>
         <footer class="action-bar">
           <div class="status-group">
             <span id="status-indicator" class="status-indicator"></span>
             <div id="token-meter" class="token-meter">
               <span id="token-count">⚡ 0 токенов</span>
-              <div class="quota-progress-container" title="Дневной лимит бесплатных запросов">
+              <div class="quota-progress-container">
                 <div id="quota-progress-bar" class="quota-progress-bar"></div>
               </div>
-              <span id="quota-text">1/1500</span>
+              <span id="quota-text">Общий пул</span>
             </div>
           </div>
           <div class="action-buttons">
-            <button id="new-chat-btn" class="action-btn" title="Новая сессия (Ctrl+N)">+ Новый (Ctrl+N)</button>
             <button id="copy-btn" class="action-btn" title="Скопировать ответ">Скопировать</button>
             <span class="esc-hint">Esc — скрыть</span>
           </div>
