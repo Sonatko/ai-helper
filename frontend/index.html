@@ -7,16 +7,43 @@
     <link rel="stylesheet" href="./src/style.css" />
   </head>
   <body>
-    <main id="app" class="launcher-bar" data-tauri-drag-region>
-      <input
-        type="text"
-        id="query-input"
-        class="query-input"
-        placeholder="Задайте вопрос..."
-        autofocus
-        autocomplete="off"
-        spellcheck="false"
-      />
+    <main id="app" class="launcher-container" data-tauri-drag-region>
+      <!-- Top Capsule Bar: Always visible (height: 60px) -->
+      <header class="launcher-bar" data-tauri-drag-region>
+        <input
+          type="text"
+          id="query-input"
+          class="query-input"
+          placeholder="Задайте вопрос..."
+          autofocus
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <div id="badge-pill" class="badge-pill hidden"></div>
+      </header>
+
+      <!-- Expandable Response Panel: Revealed on Enter -->
+      <section id="response-panel" class="response-panel hidden">
+        <div class="divider"></div>
+        <div id="response-content" class="response-content"></div>
+        <footer class="action-bar">
+          <div class="status-group">
+            <span id="status-indicator" class="status-indicator"></span>
+            <div id="token-meter" class="token-meter">
+              <span id="token-count">⚡ 0 токенов</span>
+              <div class="quota-progress-container" title="Дневной лимит бесплатных запросов">
+                <div id="quota-progress-bar" class="quota-progress-bar"></div>
+              </div>
+              <span id="quota-text">1/1500</span>
+            </div>
+          </div>
+          <div class="action-buttons">
+            <button id="new-chat-btn" class="action-btn" title="Новая сессия (Ctrl+N)">+ Новый (Ctrl+N)</button>
+            <button id="copy-btn" class="action-btn" title="Скопировать ответ">Скопировать</button>
+            <span class="esc-hint">Esc — скрыть</span>
+          </div>
+        </footer>
+      </section>
     </main>
     <script type="module" src="./src/main.ts"></script>
   </body>

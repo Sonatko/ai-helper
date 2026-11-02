@@ -32,6 +32,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::passport::get_last_passport,
             commands::content::get_last_content,
+            commands::stream::test_mock_stream,
+            commands::window::expand_window,
+            commands::window::collapse_window,
         ])
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()

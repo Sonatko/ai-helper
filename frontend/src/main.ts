@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow, PhysicalPosition } from "@tauri-apps/api/window";
 
 /**
@@ -34,44 +34,114 @@ export type CapturedContent =
   | { type: "Screenshot"; payload: { base64: string; width: number; height: number } }
   | { type: "Empty" };
 
-/**
- * Main TypeScript entry point for the AI Helper desktop window.
- *
- * Why:
- * Implements intuitive window behavior:
- * 1. Immediate focus into the input field for instant keyboard typing.
- * 2. Fetches the active Window Passport captured at hotkey press (ready for AI query packet).
- * 3. Middle-mouse-button (wheel hold & drag) custom window repositioning using Pointer Events.
- * 4. Escape key handler: clears query and hides the window instantly.
- */
 window.addEventListener("DOMContentLoaded", () => {
   const queryInput = document.getElementById("query-input") as HTMLInputElement | null;
-  const appWindow = getCurrentWindow();
+  const badgePill = document.getElementById("badge-pill") as HTMLElement | null;
+  const responsePanel = document.getElementById("response-panel") as HTMLElement | null;
+  const responseContent = document.getElementById("response-content") as HTMLElement | null;
+  const statusIndicator = document.getElementById("status-indicator") as HTMLElement | null;
+  const tokenCountEl = document.getElementById("token-count") as HTMLElement | null;
+  const quotaTextEl = document.getElementById("quota-text") as HTMLElement | null;
+  const quotaProgressBar = document.getElementById("quota-progress-bar") as HTMLElement | null;
+  const copyBtn = document.getElementById("copy-btn") as HTMLButtonElement | null;
+  const newChatBtn = document.getElementById("new-chat-btn") as HTMLButtonElement | null;
 
-  // 1. Auto-focus the input field on initial load and every time the window regains focus
+  const appWindow = getCurrentWindow();
+  let isExpanded = false;
+  let isStreaming = false;
+
+  // Daily quota tracker in localStorage
+  const getTodayKey = () => `ai_helper_requests_${new Date().toISOString().slice(0, 10)}`;
+  const getDailyRequests = (): number => {
+    return parseInt(localStorage.getItem(getTodayKey()) || "0", 10);
+  };
+  const incrementDailyRequests = (): number => {
+    const next = getDailyRequests() + 1;
+    localStorage.setItem(getTodayKey(), next.toString());
+    return next;
+  };
+
+  const updateQuotaDisplay = () => {
+    const used = getDailyRequests();
+    const max = 1500;
+    if (quotaTextEl) {
+      quotaTextEl.textContent = `${used}/${max}`;
+    }
+    if (quotaProgressBar) {
+      const pct = Math.min(100, Math.max(1, (used / max) * 100));
+      quotaProgressBar.style.width = `${pct}%`;
+    }
+  };
+
+  updateQuotaDisplay();
+
+  // 1. Expand / Collapse Window handlers (delegated to Rust backend)
+  const expandWindow = async () => {
+    if (!isExpanded) {
+      await invoke("expand_window");
+      if (responsePanel) {
+        responsePanel.classList.remove("hidden");
+      }
+      isExpanded = true;
+    }
+  };
+
+  const collapseWindow = async () => {
+    if (isExpanded) {
+      if (responsePanel) {
+        responsePanel.classList.add("hidden");
+      }
+      await invoke("collapse_window");
+      isExpanded = false;
+    }
+  };
+
+  // 2. Start new session handler (Ctrl+N or + Новый button)
+  const startNewSession = async () => {
+    if (isStreaming) return;
+    await collapseWindow();
+    if (queryInput) {
+      queryInput.value = "";
+      queryInput.focus();
+    }
+    if (responseContent) {
+      responseContent.textContent = "";
+    }
+    if (statusIndicator) {
+      statusIndicator.textContent = "";
+    }
+    if (tokenCountEl) {
+      tokenCountEl.textContent = "⚡ 0 токенов";
+    }
+    // Refresh passport and content for the new context
+    focusInput();
+  };
+
+  // 3. Auto-focus and fetch context passport & content
   const focusInput = async () => {
     if (queryInput) {
       queryInput.focus();
-      queryInput.select();
+      if (!isExpanded) {
+        queryInput.select();
+      }
     }
 
-    // Query the context passport and captured content
     try {
       const passport = await invoke<WindowPassport | null>("get_last_passport");
-      if (passport) {
-        console.log(
-          `[AI Helper UI] Active Context: ${passport.app_name} (${passport.process_name}) | "${passport.window_title}"`
-        );
-      }
-
       const content = await invoke<CapturedContent | null>("get_last_content");
-      if (content) {
-        if (content.type === "Text") {
-          console.log(`[AI Helper UI] Captured Text (${content.payload.length} chars):`, content.payload);
-        } else if (content.type === "Screenshot") {
-          console.log(
-            `[AI Helper UI] Captured Window Screenshot: ${content.payload.width}x${content.payload.height} px`
-          );
+
+      if (badgePill) {
+        if (content && content.type === "Text") {
+          badgePill.textContent = "📝 Текст";
+          badgePill.title = `Выделено: ${content.payload.slice(0, 50)}...`;
+          badgePill.classList.remove("hidden");
+        } else if (content && content.type === "Screenshot") {
+          const app = passport?.app_name || "Окно";
+          badgePill.textContent = `📷 ${app}`;
+          badgePill.title = `Снимок окна: ${passport?.window_title || ""}`;
+          badgePill.classList.remove("hidden");
+        } else {
+          badgePill.classList.add("hidden");
         }
       }
     } catch (err) {
@@ -82,7 +152,7 @@ window.addEventListener("DOMContentLoaded", () => {
   focusInput();
   window.addEventListener("focus", focusInput);
 
-  // 2. Middle-click (wheel hold & move) window dragging
+  // 4. Middle-click (wheel hold & move) window dragging
   let isDragging = false;
   let startScreenX = 0;
   let startScreenY = 0;
@@ -91,19 +161,15 @@ window.addEventListener("DOMContentLoaded", () => {
 
   window.addEventListener("pointerdown", async (event: PointerEvent) => {
     if (event.button === 1) {
-      // 1 = Middle mouse button (wheel press)
       event.preventDefault();
-
       const target = event.target as HTMLElement | null;
       if (target && target.setPointerCapture) {
         try {
           target.setPointerCapture(event.pointerId);
         } catch {
-          // Non-critical if capture fails
+          // Ignore
         }
       }
-
-      // Query current physical window position on the monitor
       const pos = await appWindow.outerPosition();
       startWindowX = pos.x;
       startWindowY = pos.y;
@@ -129,7 +195,7 @@ window.addEventListener("DOMContentLoaded", () => {
         try {
           target.releasePointerCapture(event.pointerId);
         } catch {
-          // Non-critical
+          // Ignore
         }
       }
     }
@@ -138,16 +204,94 @@ window.addEventListener("DOMContentLoaded", () => {
   window.addEventListener("pointerup", stopDrag);
   window.addEventListener("pointercancel", stopDrag);
 
-  // 3. Escape key: clear input and instantly hide the window
-  window.addEventListener("keydown", (event: KeyboardEvent) => {
+  // 5. Keyboard shortcuts: Enter (send), Escape (hide without wipe), Ctrl+N (new session)
+  window.addEventListener("keydown", async (event: KeyboardEvent) => {
+    // Ctrl + N: Start fresh session
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "n") {
+      event.preventDefault();
+      await startNewSession();
+      return;
+    }
+
+    // Enter: Send query and stream response
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      const query = queryInput?.value.trim() || "";
+      if (!query || isStreaming) {
+        return;
+      }
+
+      await expandWindow();
+      if (statusIndicator) {
+        statusIndicator.textContent = "● Печатает...";
+      }
+      if (responseContent) {
+        responseContent.textContent = "";
+      }
+
+      isStreaming = true;
+      incrementDailyRequests();
+      updateQuotaDisplay();
+
+      let totalChars = 0;
+
+      // Subscribe to real-time IPC channel chunks
+      const onChunk = new Channel<string>();
+      onChunk.onmessage = (chunk: string) => {
+        if (responseContent) {
+          responseContent.textContent += chunk;
+          totalChars += chunk.length;
+          // Approximate token count: ~3.8 chars per token for mixed code/Russian
+          const tokens = Math.max(1, Math.round(totalChars / 3.8));
+          if (tokenCountEl) {
+            tokenCountEl.textContent = `⚡ ${tokens} токенов`;
+          }
+          // Auto-scroll to bottom as text arrives
+          responseContent.scrollTop = responseContent.scrollHeight;
+        }
+      };
+
+      try {
+        await invoke("test_mock_stream", { onChunk });
+        if (statusIndicator) {
+          statusIndicator.textContent = "✓ Завершено";
+        }
+      } catch (err) {
+        if (statusIndicator) {
+          statusIndicator.textContent = "✕ Ошибка потока";
+        }
+        console.error("[AI Helper UI] Stream error:", err);
+      } finally {
+        isStreaming = false;
+      }
+    }
+
+    // Escape: Hide window softly WITHOUT deleting current response!
     if (event.key === "Escape") {
       event.preventDefault();
-      if (queryInput) {
-        queryInput.value = "";
-      }
       appWindow.hide().catch((err) => {
-        console.error("[AI Helper] Failed to hide window on Escape:", err);
+        console.error("[AI Helper] Failed to hide window:", err);
       });
     }
   });
+
+  // 6. Action button handlers
+  if (copyBtn) {
+    copyBtn.addEventListener("click", async () => {
+      const text = responseContent?.textContent || "";
+      if (text) {
+        await navigator.clipboard.writeText(text);
+        copyBtn.textContent = "Скопировано!";
+        setTimeout(() => {
+          copyBtn.textContent = "Скопировать";
+        }, 1500);
+      }
+    });
+  }
+
+  if (newChatBtn) {
+    newChatBtn.addEventListener("click", async () => {
+      await startNewSession();
+    });
+  }
 });
