@@ -1,4 +1,30 @@
+import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow, PhysicalPosition } from "@tauri-apps/api/window";
+
+/**
+ * Window passport data structure received from the Rust Win32 backend.
+ */
+export interface WindowPassport {
+  hwnd: number;
+  pid: number;
+  process_name: string;
+  app_name: string;
+  process_path: string;
+  window_title: string;
+  rect: {
+    left: number;
+    top: number;
+    right: number;
+    bottom: number;
+    width: number;
+    height: number;
+  };
+  dpi: number;
+  environment: string | null;
+  is_elevated: boolean;
+  os_info: string;
+  arch: string;
+}
 
 /**
  * Main TypeScript entry point for the AI Helper desktop window.
@@ -6,18 +32,31 @@ import { getCurrentWindow, PhysicalPosition } from "@tauri-apps/api/window";
  * Why:
  * Implements intuitive window behavior:
  * 1. Immediate focus into the input field for instant keyboard typing.
- * 2. Middle-mouse-button (wheel hold & drag) custom window repositioning using Pointer Events.
- * 3. Escape key handler: clears query and hides the window instantly.
+ * 2. Fetches the active Window Passport captured at hotkey press (ready for AI query packet).
+ * 3. Middle-mouse-button (wheel hold & drag) custom window repositioning using Pointer Events.
+ * 4. Escape key handler: clears query and hides the window instantly.
  */
 window.addEventListener("DOMContentLoaded", () => {
   const queryInput = document.getElementById("query-input") as HTMLInputElement | null;
   const appWindow = getCurrentWindow();
 
   // 1. Auto-focus the input field on initial load and every time the window regains focus
-  const focusInput = () => {
+  const focusInput = async () => {
     if (queryInput) {
       queryInput.focus();
       queryInput.select();
+    }
+
+    // Query the context passport captured by the Win32 backend before the window was shown
+    try {
+      const passport = await invoke<WindowPassport | null>("get_last_passport");
+      if (passport) {
+        console.log(
+          `[AI Helper UI] Active Context: ${passport.app_name} (${passport.process_name}) | "${passport.window_title}"`
+        );
+      }
+    } catch (err) {
+      console.error("[AI Helper UI] Failed to retrieve window passport:", err);
     }
   };
 

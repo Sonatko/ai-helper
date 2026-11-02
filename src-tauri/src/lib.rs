@@ -1,17 +1,35 @@
+pub mod commands;
+pub mod system;
+
+use std::sync::Mutex;
 use tauri::Manager;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+
+/// Global thread-safe state holding context data across Tauri commands.
+///
+/// Why:
+/// The hotkey handler runs on a background thread. When F7 is pressed, it captures
+/// the foreground window passport and saves it here so the frontend can query it.
+pub struct AppState {
+    pub last_passport: Mutex<Option<system::passport::WindowPassport>>,
+}
 
 /// The core library entry point for the AI Helper desktop application.
 ///
 /// Why:
-/// Slice 2 implements global system hotkey registration via Windows Win32 API.
-/// Pressing the hotkey toggles the visibility of the assistant window:
-/// - If visible: hides the window immediately.
-/// - If hidden: reveals the window and focuses the input field.
-/// Includes graceful conflict handling (falls back to F8 if F7 is already occupied).
+/// Initializes the Tauri application, registers system hotkeys, manages IPC state,
+/// and handles the lifecycle of the floating assistant window.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // Register managed application state
+        .manage(AppState {
+            last_passport: Mutex::new(None),
+        })
+        // Register IPC commands callable from frontend via @tauri-apps/api/core
+        .invoke_handler(tauri::generate_handler![
+            commands::passport::get_last_passport
+        ])
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, _shortcut, event| {
@@ -21,6 +39,24 @@ pub fn run() {
                             if is_visible {
                                 let _ = window.hide();
                             } else {
+                                // CRITICAL RACE-CONDITION PREVENTION:
+                                // Capture the active foreground window passport BEFORE showing our window,
+                                // while the target application (VS Code, Terminal, etc.) still holds OS focus!
+                                let passport = system::passport::capture_active_window_passport();
+
+                                if let Some(ref p) = passport {
+                                    println!(
+                                        "[AI Helper Passport] App: '{}' ({}) | Title: '{}' | Env: {:?} | Bounds: {}x{} | DPI: {}",
+                                        p.app_name, p.process_name, p.window_title, p.environment, p.rect.width, p.rect.height, p.dpi
+                                    );
+                                }
+
+                                if let Some(state) = app.try_state::<AppState>() {
+                                    if let Ok(mut last) = state.last_passport.lock() {
+                                        *last = passport;
+                                    }
+                                }
+
                                 let _ = window.unminimize();
                                 let _ = window.show();
                                 let _ = window.set_focus();
@@ -38,7 +74,6 @@ pub fn run() {
             }
 
             // Register global shortcut with graceful fallback
-            // Default preferred key: F7 (safe single key, minimal collision risk)
             let primary_key = "F7";
             let fallback_key = "F8";
 
