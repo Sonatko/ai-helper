@@ -410,6 +410,58 @@ html, body {
   margin-left: 4px;
 }
 
+/* Quick Commands Autocomplete Popup */
+.commands-popup {
+  position: absolute;
+  top: 60px;
+  left: 16px;
+  right: 16px;
+  background: #151823;
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  border-radius: 8px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  z-index: 1000;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.commands-popup.hidden {
+  display: none !important;
+}
+
+.command-pop-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.1s ease;
+}
+
+.command-pop-item:hover, .command-pop-item.selected {
+  background: rgba(56, 189, 248, 0.15);
+}
+
+.command-pop-trigger {
+  font-family: monospace;
+  font-weight: 600;
+  color: #38bdf8;
+  font-size: 12.5px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.command-pop-name {
+  color: #94a3b8;
+  font-size: 11px;
+}
+
 .hidden {
   display: none !important;
 }

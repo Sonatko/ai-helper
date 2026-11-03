@@ -20,40 +20,80 @@
       }
 
       body {
-        padding: 16px 20px;
+        padding: 14px 18px;
         display: flex;
         flex-direction: column;
-        justify-content: space-between;
+        justify-content: flex-start;
+        gap: 6px;
       }
 
       .header {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        padding-bottom: 10px;
+        padding-bottom: 8px;
         border-bottom: 1px solid rgba(255, 255, 255, 0.08);
       }
 
       .title {
-        font-size: 14px;
+        font-size: 13px;
         font-weight: 600;
         color: #ffffff;
         display: flex;
         align-items: center;
-        gap: 8px;
+        gap: 6px;
+      }
+
+      .tabs-segmented {
+        display: flex;
+        background: #171922;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 6px;
+        padding: 2px;
+        gap: 2px;
+      }
+
+      .segmented-btn {
+        background: transparent;
+        border: none;
+        color: #94a3b8;
+        font-size: 11.5px;
+        font-weight: 500;
+        padding: 3px 10px;
+        border-radius: 4px;
+        cursor: pointer;
+        transition: all 0.15s ease;
+      }
+
+      .segmented-btn:hover {
+        color: #f3f4f6;
+      }
+
+      .segmented-btn.active {
+        background: #0284c7;
+        color: #ffffff;
+        font-weight: 600;
+      }
+
+      .tab-pane {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        margin-top: 8px;
+        flex: 1;
+        overflow-y: auto;
       }
 
       .form-container {
         display: flex;
         flex-direction: column;
-        gap: 12px;
-        margin-top: 10px;
+        gap: 11px;
       }
 
       .form-row {
         display: flex;
         flex-direction: column;
-        gap: 5px;
+        gap: 4px;
       }
 
       .form-label {
@@ -76,9 +116,9 @@
         background: #171922;
         border: 1px solid rgba(255, 255, 255, 0.1);
         color: #f3f4f6;
-        padding: 7px 10px;
+        padding: 6px 10px;
         border-radius: 6px;
-        font-size: 12.5px;
+        font-size: 12px;
         outline: none;
         box-sizing: border-box;
         transition: border-color 0.15s ease;
@@ -103,17 +143,21 @@
 
       .styled-textarea {
         width: 100%;
-        height: 48px;
-        background: #171922;
+        height: 125px;
+        min-height: 90px;
+        background: #141620;
         border: 1px solid rgba(255, 255, 255, 0.1);
-        color: #f3f4f6;
-        padding: 6px 10px;
+        color: #e2e8f0;
+        padding: 8px 10px;
         border-radius: 6px;
         font-size: 11.5px;
+        line-height: 1.45;
         outline: none;
-        resize: none;
-        font-family: inherit;
+        resize: vertical;
+        font-family: "Cascadia Code", "Consolas", ui-monospace, monospace;
         box-sizing: border-box;
+        scrollbar-width: thin;
+        scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
       }
       .styled-textarea:focus {
         border-color: #38bdf8;
@@ -123,7 +167,7 @@
         background: #202432;
         border: 1px solid rgba(255, 255, 255, 0.1);
         color: #e2e8f0;
-        padding: 6px 12px;
+        padding: 5px 11px;
         border-radius: 6px;
         font-size: 11.5px;
         cursor: pointer;
@@ -161,110 +205,216 @@
         line-height: 1.4;
       }
 
-      .footer {
+      /* Compact Dense Commands Styles */
+      .commands-header-row {
         display: flex;
-        justify-content: flex-end;
+        justify-content: space-between;
         align-items: center;
-        padding-top: 10px;
-        border-top: 1px solid rgba(255, 255, 255, 0.08);
+        padding: 2px 0 2px 0;
+      }
+
+      .commands-count-label {
+        font-size: 11.5px;
+        color: #94a3b8;
+        font-weight: 500;
+      }
+
+      .commands-dense-list {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        max-height: 310px;
+        overflow-y: auto;
+        padding-right: 2px;
+      }
+
+      .command-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 6px 10px;
+        border-radius: 6px;
+        background: #161822;
+        border: 1px solid rgba(255, 255, 255, 0.05);
+        transition: background 0.1s ease, border-color 0.1s ease;
+      }
+
+      .command-row:hover {
+        background: #1c202e;
+        border-color: rgba(56, 189, 248, 0.25);
+      }
+
+      .command-row-left {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        cursor: pointer;
+        flex: 1;
+        overflow: hidden;
+      }
+
+      .command-trigger-badge {
+        font-family: monospace;
+        font-weight: 600;
+        color: #38bdf8;
+        background: rgba(56, 189, 248, 0.12);
+        padding: 2px 7px;
+        border-radius: 4px;
+        font-size: 11.5px;
+        white-space: nowrap;
+      }
+
+      .command-name-text {
+        font-size: 12px;
+        color: #e2e8f0;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .command-delete-btn {
+        background: transparent;
+        border: none;
+        color: #ef4444;
+        font-size: 12px;
+        cursor: pointer;
+        padding: 2px 6px;
+        opacity: 0.6;
+        transition: opacity 0.15s ease;
+        border-radius: 4px;
+      }
+
+      .command-delete-btn:hover {
+        opacity: 1;
+        background: rgba(239, 68, 68, 0.12);
       }
     </style>
   </head>
   <body>
-    <!-- Header -->
+    <!-- Header with Segmented Tabs -->
     <div class="header">
       <div class="title">
         <span>⚙️ AI Settings</span>
       </div>
-      <div id="status-msg" class="status-text"></div>
+      <div class="tabs-segmented">
+        <button type="button" id="tab-btn-general" class="segmented-btn active">Models</button>
+        <button type="button" id="tab-btn-commands" class="segmented-btn">Commands</button>
+      </div>
     </div>
 
-    <!-- Main Clean 3-Row Form -->
-    <div class="form-container">
-      <!-- 1. Provider Select -->
-      <div class="form-row">
-        <label class="form-label" for="provider-select">
-          <span>Provider</span>
-          <div style="display: flex; gap: 8px; align-items: center;">
-            <button type="button" id="delete-provider-btn" class="btn" style="display: none; padding: 1px 6px; font-size: 10px; color: #ef4444; border-color: rgba(239, 68, 68, 0.3);" title="Delete this custom provider">Delete</button>
-            <span id="provider-badge" style="font-size: 10.5px; color: #10b981;">Ready</span>
+    <!-- Tab 1: Models & Keys -->
+    <div id="tab-pane-general" class="tab-pane">
+      <div class="form-container">
+        <!-- 1. Provider Select -->
+        <div class="form-row">
+          <label class="form-label" for="provider-select">
+            <span>Provider</span>
+            <div style="display: flex; gap: 8px; align-items: center;">
+              <button type="button" id="delete-provider-btn" class="btn" style="display: none; padding: 1px 6px; font-size: 10px; color: #ef4444; border-color: rgba(239, 68, 68, 0.3);" title="Delete this custom provider">Delete</button>
+              <span id="provider-badge" style="font-size: 10.5px; color: #10b981;">Ready</span>
+            </div>
+          </label>
+          <select id="provider-select" class="styled-select">
+            <optgroup label="Standard Providers">
+              <option value="auto">⚡ Auto Router</option>
+              <option value="gemini_key">Google Gemini API</option>
+              <option value="groq_key">Groq Cloud (Fast LPU)</option>
+              <option value="openrouter_key">OpenRouter Gateway</option>
+              <option value="public_pool">Public Pool (No key required)</option>
+            </optgroup>
+            <optgroup label="Custom Providers" id="custom-providers-group"></optgroup>
+            <option value="add_new_provider">➕ Add Custom Provider...</option>
+          </select>
+        </div>
+
+        <!-- 1b. Custom Provider Creation Card (Hidden by default) -->
+        <div id="add-provider-card" style="display: none; background: #151720; border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 6px; padding: 10px; margin-bottom: 2px;">
+          <div style="font-size: 12px; font-weight: 600; color: #38bdf8; margin-bottom: 8px;">➕ Add OpenAI-Compatible Provider</div>
+          <div style="display: flex; flex-direction: column; gap: 6px;">
+            <input type="text" id="new-provider-name" class="styled-input" placeholder="Name (e.g. DeepSeek API, Local Ollama, vLLM)" />
+            <input type="text" id="new-provider-url" class="styled-input" placeholder="Base URL (e.g. https://api.deepseek.com/v1)" />
+            <input type="password" id="new-provider-key" class="styled-input" placeholder="API Key (optional for local models)" />
+            <div style="display: flex; justify-content: flex-end; gap: 6px; margin-top: 4px;">
+              <button type="button" id="cancel-add-provider-btn" class="btn">Cancel</button>
+              <button type="button" id="save-new-provider-btn" class="btn btn-primary">Add Provider</button>
+            </div>
           </div>
-        </label>
-        <select id="provider-select" class="styled-select">
-          <optgroup label="Standard Providers">
-            <option value="auto">⚡ Auto Router</option>
-            <option value="gemini_key">Google Gemini API</option>
-            <option value="groq_key">Groq Cloud (Fast LPU)</option>
-            <option value="openrouter_key">OpenRouter Gateway</option>
-            <option value="public_pool">Public Pool (No key required)</option>
-          </optgroup>
-          <optgroup label="Custom Providers" id="custom-providers-group"></optgroup>
-          <option value="add_new_provider">➕ Add Custom Provider...</option>
-        </select>
+        </div>
+
+        <!-- 2. Dynamic Key Row -->
+        <div class="form-row" id="key-row">
+          <label class="form-label" for="key-input" id="key-label">
+            <span>API Key</span>
+            <a id="get-key-link" href="https://aistudio.google.com/app/apikey" target="_blank" style="color: #38bdf8; text-decoration: none;">Get key ↗</a>
+          </label>
+          <div class="form-input-group">
+            <input type="password" id="key-input" class="styled-input" placeholder="Paste your API key here..." autocomplete="off" />
+            <button type="button" id="eye-btn" class="btn" title="Toggle visibility">👁️</button>
+            <button type="button" id="save-btn" class="btn btn-primary">Save</button>
+            <button type="button" id="refresh-btn" class="btn" title="Fetch latest models">🔄</button>
+          </div>
+        </div>
+
+        <!-- 2b. Secondary Endpoint input for Local / Custom (only visible for custom_local) -->
+        <div class="form-row" id="endpoint-row" style="display: none;">
+          <label class="form-label" for="endpoint-input">Base URL</label>
+          <div class="form-input-group">
+            <input type="text" id="endpoint-input" class="styled-input" placeholder="http://localhost:11434/v1" />
+            <button type="button" id="local-save-btn" class="btn btn-primary">Save URL</button>
+          </div>
+        </div>
+
+        <!-- 2c. Info Notice for Auto and Public modes -->
+        <div id="info-notice" class="info-notice" style="display: none;"></div>
+
+        <!-- 3. Model Select -->
+        <div class="form-row" id="model-row">
+          <label class="form-label" for="model-select">
+            <span>Model</span>
+            <span id="model-count-label" style="font-size: 10.5px; color: #94a3b8;"></span>
+          </label>
+          <select id="model-select" class="styled-select"></select>
+        </div>
+
+        <!-- 4. System Instruction -->
+        <div class="form-row">
+          <label class="form-label" for="prompt-input">
+            <span>System Prompt</span>
+            <button type="button" id="reset-prompt-btn" class="btn" style="padding: 1px 6px; font-size: 10px;">Reset</button>
+          </label>
+          <textarea id="prompt-input" class="styled-textarea" placeholder="Prompt..."></textarea>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tab 2: Quick Commands -->
+    <div id="tab-pane-commands" class="tab-pane" style="display: none;">
+      <div class="commands-header-row">
+        <span id="commands-count-label" class="commands-count-label">Quick Commands</span>
+        <div style="display: flex; gap: 6px;">
+          <button type="button" id="add-command-btn" class="btn btn-primary" style="padding: 2px 8px; font-size: 11px;">+ Add</button>
+          <button type="button" id="reset-commands-btn" class="btn" style="padding: 2px 8px; font-size: 11px;">Reset</button>
+        </div>
       </div>
 
-      <!-- 1b. Custom Provider Creation Card (Hidden by default) -->
-      <div id="add-provider-card" style="display: none; background: #151720; border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 6px; padding: 10px; margin-bottom: 2px;">
-        <div style="font-size: 12px; font-weight: 600; color: #38bdf8; margin-bottom: 8px;">➕ Add OpenAI-Compatible Provider</div>
+      <!-- Add Custom Command Card (hidden by default) -->
+      <div id="add-command-card" style="display: none; background: #151720; border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 6px; padding: 10px;">
+        <div style="font-size: 12px; font-weight: 600; color: #38bdf8; margin-bottom: 8px;">➕ Add Custom Slash Command</div>
         <div style="display: flex; flex-direction: column; gap: 6px;">
-          <input type="text" id="new-provider-name" class="styled-input" placeholder="Name (e.g. DeepSeek API, Local Ollama, vLLM)" />
-          <input type="text" id="new-provider-url" class="styled-input" placeholder="Base URL (e.g. https://api.deepseek.com/v1)" />
-          <input type="password" id="new-provider-key" class="styled-input" placeholder="API Key (optional for local models)" />
-          <div style="display: flex; justify-content: flex-end; gap: 6px; margin-top: 4px;">
-            <button type="button" id="cancel-add-provider-btn" class="btn">Cancel</button>
-            <button type="button" id="save-new-provider-btn" class="btn btn-primary">Add Provider</button>
+          <div style="display: flex; gap: 6px;">
+            <input type="text" id="new-cmd-trigger" class="styled-input" placeholder="Trigger (e.g. /sql, /test)" style="width: 130px;" />
+            <input type="text" id="new-cmd-name" class="styled-input" placeholder="Name (e.g. Optimize SQL Query)" />
+          </div>
+          <textarea id="new-cmd-template" class="styled-textarea" style="height: 54px;" placeholder="Prompt template. Use {selection} for selected text and {window_title} for window name."></textarea>
+          <div style="display: flex; justify-content: flex-end; gap: 6px;">
+            <button type="button" id="cancel-add-cmd-btn" class="btn">Cancel</button>
+            <button type="button" id="save-new-cmd-btn" class="btn btn-primary">Save Command</button>
           </div>
         </div>
       </div>
 
-      <!-- 2. Dynamic Key Row -->
-      <div class="form-row" id="key-row">
-        <label class="form-label" for="key-input" id="key-label">
-          <span>API Key</span>
-          <a id="get-key-link" href="https://aistudio.google.com/app/apikey" target="_blank" style="color: #38bdf8; text-decoration: none;">Get key ↗</a>
-        </label>
-        <div class="form-input-group">
-          <input type="password" id="key-input" class="styled-input" placeholder="Paste your API key here..." autocomplete="off" />
-          <button type="button" id="eye-btn" class="btn" title="Toggle visibility">👁️</button>
-          <button type="button" id="save-btn" class="btn btn-primary">Save</button>
-          <button type="button" id="refresh-btn" class="btn" title="Fetch latest models">🔄</button>
-        </div>
-      </div>
-
-      <!-- 2b. Secondary Endpoint input for Local / Custom (only visible for custom_local) -->
-      <div class="form-row" id="endpoint-row" style="display: none;">
-        <label class="form-label" for="endpoint-input">Base URL</label>
-        <div class="form-input-group">
-          <input type="text" id="endpoint-input" class="styled-input" placeholder="http://localhost:11434/v1" />
-          <button type="button" id="local-save-btn" class="btn btn-primary">Save URL</button>
-        </div>
-      </div>
-
-      <!-- 2c. Info Notice for Auto and Public modes -->
-      <div id="info-notice" class="info-notice" style="display: none;"></div>
-
-      <!-- 3. Model Select -->
-      <div class="form-row" id="model-row">
-        <label class="form-label" for="model-select">
-          <span>Model</span>
-          <span id="model-count-label" style="font-size: 10.5px; color: #94a3b8;"></span>
-        </label>
-        <select id="model-select" class="styled-select"></select>
-      </div>
-
-      <!-- 4. System Instruction -->
-      <div class="form-row">
-        <label class="form-label" for="prompt-input">
-          <span>System Prompt</span>
-          <button type="button" id="reset-prompt-btn" class="btn" style="padding: 1px 6px; font-size: 10px;">Reset</button>
-        </label>
-        <textarea id="prompt-input" class="styled-textarea" placeholder="Prompt..."></textarea>
-      </div>
-    </div>
-
-    <!-- Footer -->
-    <div class="footer">
-      <button type="button" id="close-btn" class="btn">Done (Esc)</button>
+      <!-- Dense Single-Row Commands List -->
+      <div id="commands-list" class="commands-dense-list"></div>
     </div>
 
     <script type="module" src="./src/settings.ts"></script>

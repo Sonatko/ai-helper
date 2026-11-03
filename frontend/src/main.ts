@@ -7,7 +7,12 @@ import {
   getProviderBadge,
   type HistoryMessage,
 } from "./ai_client";
-import { getProviderTelemetryStats, type ProviderQuotaInfo } from "./settings";
+import {
+  getProviderTelemetryStats,
+  loadQuickCommands,
+  type ProviderQuotaInfo,
+  type QuickCommand,
+} from "./settings";
 
 /**
  * Window passport data structure received from the Rust Win32 backend.
@@ -115,6 +120,42 @@ window.addEventListener("DOMContentLoaded", () => {
   const quotaTextEl = document.getElementById("quota-text") as HTMLElement | null;
   const quotaProgressBar = document.getElementById("quota-progress-bar") as HTMLElement | null;
   const copyBtn = document.getElementById("copy-btn") as HTMLButtonElement | null;
+  const commandsPopup = document.getElementById("commands-popup") as HTMLElement | null;
+
+  let selectedCommandIndex = 0;
+  let matchingCommands: QuickCommand[] = [];
+
+  const hideCommandsPopup = () => {
+    if (commandsPopup) commandsPopup.classList.add("hidden");
+    matchingCommands = [];
+    selectedCommandIndex = 0;
+  };
+
+  const renderCommandsPopup = () => {
+    if (!commandsPopup) return;
+    if (matchingCommands.length === 0) {
+      hideCommandsPopup();
+      return;
+    }
+    commandsPopup.innerHTML = "";
+    matchingCommands.forEach((cmd, idx) => {
+      const item = document.createElement("div");
+      item.className = `command-pop-item ${idx === selectedCommandIndex ? "selected" : ""}`;
+      item.innerHTML = `
+        <span class="command-pop-trigger">${cmd.icon} ${cmd.trigger}</span>
+        <span class="command-pop-name">${cmd.name}</span>
+      `;
+      item.addEventListener("click", () => {
+        if (queryInput) {
+          queryInput.value = `${cmd.trigger} `;
+          queryInput.focus();
+        }
+        hideCommandsPopup();
+      });
+      commandsPopup.appendChild(item);
+    });
+    commandsPopup.classList.remove("hidden");
+  };
 
   const appWindow = getCurrentWindow();
   let isExpanded = false;
@@ -607,16 +648,67 @@ window.addEventListener("DOMContentLoaded", () => {
     });
   };
 
-  // Direct Input Listener with IME composition protection to eliminate the double-enter glitch
+  // Direct Input Listener with IME composition protection and Quick Commands Autocomplete
   if (queryInput) {
+    queryInput.addEventListener("input", () => {
+      const val = queryInput.value;
+      if (val.startsWith("/") && !val.includes(" ")) {
+        const all = loadQuickCommands().filter((c) => c.enabled);
+        matchingCommands = all.filter((c) => c.trigger.toLowerCase().startsWith(val.toLowerCase()));
+        selectedCommandIndex = 0;
+        renderCommandsPopup();
+      } else {
+        hideCommandsPopup();
+      }
+    });
+
     queryInput.addEventListener("keydown", async (event: KeyboardEvent) => {
       // If user is completing an IME composition (e.g. Russian input in WebView2), ignore Enter key during composition
       if (event.isComposing || event.keyCode === 229) {
         return;
       }
+
+      // Autocomplete popup navigation
+      if (!commandsPopup?.classList.contains("hidden") && matchingCommands.length > 0) {
+        if (event.key === "ArrowDown") {
+          event.preventDefault();
+          selectedCommandIndex = (selectedCommandIndex + 1) % matchingCommands.length;
+          renderCommandsPopup();
+          return;
+        }
+        if (event.key === "ArrowUp") {
+          event.preventDefault();
+          selectedCommandIndex = (selectedCommandIndex - 1 + matchingCommands.length) % matchingCommands.length;
+          renderCommandsPopup();
+          return;
+        }
+        if (event.key === "Tab") {
+          event.preventDefault();
+          const selected = matchingCommands[selectedCommandIndex];
+          if (selected) {
+            queryInput.value = `${selected.trigger} `;
+            hideCommandsPopup();
+          }
+          return;
+        }
+        if (event.key === "Escape") {
+          event.preventDefault();
+          hideCommandsPopup();
+          return;
+        }
+      }
+
       if (event.key === "Enter" && !event.shiftKey) {
+        // If popup is open and user pressed enter directly on a partial command, fill it first or submit
+        if (!commandsPopup?.classList.contains("hidden") && matchingCommands.length > 0) {
+          const selected = matchingCommands[selectedCommandIndex];
+          if (selected && queryInput.value.trim() === selected.trigger) {
+            hideCommandsPopup();
+          }
+        }
         event.preventDefault();
         event.stopPropagation();
+        hideCommandsPopup();
         await submitCurrentQuery();
       }
     });

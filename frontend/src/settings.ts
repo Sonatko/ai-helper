@@ -1,9 +1,146 @@
 import { invoke } from "@tauri-apps/api/core";
 
 export const DEFAULT_SYSTEM_PROMPT =
-  "Ты сверхбыстрый и лаконичный технический ассистент разработчика для Windows 11. " +
-  "Отвечай кратко, без лишних вводных слов, сразу суть решения. " +
-  "Если передан скриншот окна или выделенный код с ошибкой — дай точечное исправление и понятную причину сбоя.";
+  "You are a precision, multi-domain system assistant for Windows.\n" +
+  "Your goal is to solve the user's task directly with maximum clarity and zero fluff.\n\n" +
+  "OPERATING PRINCIPLES:\n" +
+  "1. Zero Fluff: Never include greetings, pleasantries, filler phrases, or closing remarks. Jump directly to the payload.\n" +
+  "2. Domain-Adaptive Behavior:\n" +
+  "   - If input is code, error logs, or a stack trace: diagnose root cause and provide precise, complete drop-in fixes.\n" +
+  "   - If input is prose, article, or message: perform the requested action (translate, summarize, rewrite, critique) while preserving tone.\n" +
+  "   - If input is an image or UI screenshot: explain visual elements, data tables, or interface controls clearly.\n" +
+  "3. Environment Grounding: Leverage the provided active window title and process name to tailor instructions to the user's actual runtime (WSL2, native Windows, IDE, browser, terminal).\n" +
+  "4. Output Language: Always respond in the language of the user's prompt. If the user prompts in Russian or the intent is ambiguous, default to Russian.\n" +
+  "5. Formatting: Output strictly clean, readable GitHub-flavored Markdown.";
+
+export interface QuickCommand {
+  id: string;
+  trigger: string;
+  name: string;
+  icon: string;
+  template: string;
+  isBuiltin: boolean;
+  enabled: boolean;
+}
+
+export const BUILTIN_COMMANDS: QuickCommand[] = [
+  {
+    id: "builtin_tr",
+    trigger: "/tr",
+    name: "Translate to Russian",
+    icon: "🌐",
+    template: "Translate the following text into fluent, natural Russian. Keep technical terms and proper nouns intact:\n\n{selection}",
+    isBuiltin: true,
+    enabled: true,
+  },
+  {
+    id: "builtin_fix",
+    trigger: "/fix",
+    name: "Fix Code / Error",
+    icon: "🛠️",
+    template: "Diagnose this error or code issue and provide a complete, working fix with root cause explanation:\n\n{selection}",
+    isBuiltin: true,
+    enabled: true,
+  },
+  {
+    id: "builtin_sum",
+    trigger: "/sum",
+    name: "Summarize (3-5 Bullets)",
+    icon: "📝",
+    template: "Summarize the key points of this content into 3 to 5 concise, actionable bullet points:\n\n{selection}",
+    isBuiltin: true,
+    enabled: true,
+  },
+  {
+    id: "builtin_explain",
+    trigger: "/explain",
+    name: "Explain Simply",
+    icon: "💡",
+    template: "Explain this concept, code, or architecture simply and clearly with practical context:\n\n{selection}",
+    isBuiltin: true,
+    enabled: true,
+  },
+  {
+    id: "builtin_improve",
+    trigger: "/improve",
+    name: "Improve Writing & Tone",
+    icon: "✍️",
+    template: "Proofread and enhance this text for clarity, professional tone, and grammatical accuracy without changing its core meaning:\n\n{selection}",
+    isBuiltin: true,
+    enabled: true,
+  },
+];
+
+const STORAGE_KEY_COMMANDS = "ai_helper_quick_commands_v1";
+
+export function loadQuickCommands(): QuickCommand[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_COMMANDS);
+    if (!raw) return [...BUILTIN_COMMANDS];
+    const stored: QuickCommand[] = JSON.parse(raw);
+    // Ensure all built-in commands exist if user hasn't explicitly removed them
+    const merged = [...stored];
+    for (const builtin of BUILTIN_COMMANDS) {
+      if (!merged.some((c) => c.id === builtin.id || c.trigger.toLowerCase() === builtin.trigger.toLowerCase())) {
+        merged.push(builtin);
+      }
+    }
+    return merged;
+  } catch {
+    return [...BUILTIN_COMMANDS];
+  }
+}
+
+export function saveQuickCommands(commands: QuickCommand[]): void {
+  localStorage.setItem(STORAGE_KEY_COMMANDS, JSON.stringify(commands));
+}
+
+export function resetQuickCommands(): QuickCommand[] {
+  localStorage.setItem(STORAGE_KEY_COMMANDS, JSON.stringify(BUILTIN_COMMANDS));
+  return [...BUILTIN_COMMANDS];
+}
+
+/**
+ * Expand a slash-command trigger into its corresponding full prompt template,
+ * interpolating {selection}, {window_title}, and any trailing user query.
+ */
+export function expandQuickCommand(
+  rawPrompt: string,
+  selectionText?: string,
+  windowTitle?: string
+): string {
+  const trimmed = rawPrompt.trim();
+  if (!trimmed.startsWith("/")) {
+    return rawPrompt;
+  }
+
+  // Parse "/trigger extra arguments"
+  const match = trimmed.match(/^\/([a-zA-Z0-9_-]+)(?:\s+(.*))?$/s);
+  if (!match) return rawPrompt;
+
+  const trigger = `/${match[1].toLowerCase()}`;
+  const extraQuery = match[2]?.trim() || "";
+
+  const commands = loadQuickCommands();
+  const cmd = commands.find((c) => c.enabled && c.trigger.toLowerCase() === trigger);
+  if (!cmd) return rawPrompt;
+
+  let contentToProcess = selectionText?.trim() || "";
+  if (!contentToProcess && extraQuery) {
+    contentToProcess = extraQuery;
+  }
+
+  let expanded = cmd.template;
+  expanded = expanded.replace(/\{selection\}/g, contentToProcess || "(No highlighted text provided)");
+  expanded = expanded.replace(/\{window_title\}/g, windowTitle || "");
+  expanded = expanded.replace(/\{query\}/g, extraQuery);
+
+  if (extraQuery && !cmd.template.includes("{query}") && contentToProcess !== extraQuery) {
+    expanded += `\n\nAdditional user instruction: ${extraQuery}`;
+  }
+
+  return expanded;
+}
 
 export type ProviderType =
   | "auto"
@@ -177,7 +314,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const promptInput = document.getElementById("prompt-input") as HTMLTextAreaElement;
   const resetPromptBtn = document.getElementById("reset-prompt-btn") as HTMLButtonElement;
-  const closeBtn = document.getElementById("close-btn") as HTMLButtonElement;
 
   // Eye toggle
   eyeBtn.addEventListener("click", () => {
@@ -640,6 +776,161 @@ document.addEventListener("DOMContentLoaded", () => {
     localStorage.setItem("ai_helper_system_prompt", DEFAULT_SYSTEM_PROMPT);
   });
 
+  // Tabs Navigation
+  const tabBtnGeneral = document.getElementById("tab-btn-general") as HTMLButtonElement | null;
+  const tabBtnCommands = document.getElementById("tab-btn-commands") as HTMLButtonElement | null;
+  const tabPaneGeneral = document.getElementById("tab-pane-general") as HTMLElement | null;
+  const tabPaneCommands = document.getElementById("tab-pane-commands") as HTMLElement | null;
+
+  const commandsListEl = document.getElementById("commands-list") as HTMLElement | null;
+  const addCommandBtn = document.getElementById("add-command-btn") as HTMLButtonElement | null;
+  const resetCommandsBtn = document.getElementById("reset-commands-btn") as HTMLButtonElement | null;
+  const addCommandCard = document.getElementById("add-command-card") as HTMLElement | null;
+  const newCmdTrigger = document.getElementById("new-cmd-trigger") as HTMLInputElement | null;
+  const newCmdName = document.getElementById("new-cmd-name") as HTMLInputElement | null;
+  const newCmdTemplate = document.getElementById("new-cmd-template") as HTMLTextAreaElement | null;
+  const cancelAddCmdBtn = document.getElementById("cancel-add-cmd-btn") as HTMLButtonElement | null;
+  const saveNewCmdBtn = document.getElementById("save-new-cmd-btn") as HTMLButtonElement | null;
+
+  const switchTab = (tab: "general" | "commands") => {
+    if (tab === "general") {
+      tabBtnGeneral?.classList.add("active");
+      tabBtnCommands?.classList.remove("active");
+      if (tabPaneGeneral) tabPaneGeneral.style.display = "flex";
+      if (tabPaneCommands) tabPaneCommands.style.display = "none";
+    } else {
+      tabBtnCommands?.classList.add("active");
+      tabBtnGeneral?.classList.remove("active");
+      if (tabPaneCommands) tabPaneCommands.style.display = "flex";
+      if (tabPaneGeneral) tabPaneGeneral.style.display = "none";
+      renderCommandsList();
+    }
+  };
+
+  tabBtnGeneral?.addEventListener("click", () => switchTab("general"));
+  tabBtnCommands?.addEventListener("click", () => switchTab("commands"));
+
+  const commandsCountLabel = document.getElementById("commands-count-label") as HTMLElement | null;
+
+  const renderCommandsList = () => {
+    if (!commandsListEl) return;
+    commandsListEl.innerHTML = "";
+    const commands = loadQuickCommands();
+
+    if (commandsCountLabel) {
+      const activeCount = commands.filter((c) => c.enabled).length;
+      commandsCountLabel.textContent = `Quick Commands (${activeCount}/${commands.length} active)`;
+    }
+
+    commands.forEach((cmd) => {
+      const row = document.createElement("div");
+      row.className = "command-row";
+      row.title = `Template:\n${cmd.template}`;
+
+      const left = document.createElement("label");
+      left.className = "command-row-left";
+
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = cmd.enabled;
+      checkbox.addEventListener("change", () => {
+        cmd.enabled = checkbox.checked;
+        saveQuickCommands(commands);
+        if (commandsCountLabel) {
+          const activeCount = commands.filter((c) => c.enabled).length;
+          commandsCountLabel.textContent = `Quick Commands (${activeCount}/${commands.length} active)`;
+        }
+      });
+
+      const badge = document.createElement("span");
+      badge.className = "command-trigger-badge";
+      badge.textContent = `${cmd.icon} ${cmd.trigger}`;
+
+      const name = document.createElement("span");
+      name.className = "command-name-text";
+      name.textContent = cmd.name;
+
+      left.appendChild(checkbox);
+      left.appendChild(badge);
+      left.appendChild(name);
+      row.appendChild(left);
+
+      if (!cmd.isBuiltin) {
+        const delBtn = document.createElement("button");
+        delBtn.type = "button";
+        delBtn.className = "command-delete-btn";
+        delBtn.textContent = "✕";
+        delBtn.title = "Delete this custom command";
+        delBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const updated = commands.filter((c) => c.id !== cmd.id);
+          saveQuickCommands(updated);
+          renderCommandsList();
+        });
+        row.appendChild(delBtn);
+      }
+
+      commandsListEl.appendChild(row);
+    });
+  };
+
+  addCommandBtn?.addEventListener("click", () => {
+    if (addCommandCard) addCommandCard.style.display = "block";
+    newCmdTrigger?.focus();
+  });
+
+  cancelAddCmdBtn?.addEventListener("click", () => {
+    if (addCommandCard) addCommandCard.style.display = "none";
+    if (newCmdTrigger) newCmdTrigger.value = "";
+    if (newCmdName) newCmdName.value = "";
+    if (newCmdTemplate) newCmdTemplate.value = "";
+  });
+
+  saveNewCmdBtn?.addEventListener("click", () => {
+    const rawTrigger = newCmdTrigger?.value.trim() || "";
+    const name = newCmdName?.value.trim() || "";
+    const template = newCmdTemplate?.value.trim() || "";
+
+    if (!rawTrigger || !name || !template) {
+      alert("Please fill in trigger, name, and template.");
+      return;
+    }
+
+    const trigger = rawTrigger.startsWith("/") ? rawTrigger.toLowerCase() : `/${rawTrigger.toLowerCase()}`;
+    const commands = loadQuickCommands();
+
+    if (commands.some((c) => c.trigger.toLowerCase() === trigger)) {
+      alert(`Command trigger ${trigger} already exists!`);
+      return;
+    }
+
+    const newCmd: QuickCommand = {
+      id: `custom_cmd_${Date.now()}`,
+      trigger,
+      name,
+      icon: "⚡",
+      template,
+      isBuiltin: false,
+      enabled: true,
+    };
+
+    commands.push(newCmd);
+    saveQuickCommands(commands);
+
+    if (addCommandCard) addCommandCard.style.display = "none";
+    if (newCmdTrigger) newCmdTrigger.value = "";
+    if (newCmdName) newCmdName.value = "";
+    if (newCmdTemplate) newCmdTemplate.value = "";
+    renderCommandsList();
+  });
+
+  resetCommandsBtn?.addEventListener("click", () => {
+    if (confirm("Reset all slash commands to defaults?")) {
+      resetQuickCommands();
+      renderCommandsList();
+    }
+  });
+
   // Close Settings Window
   const closeWindow = async () => {
     try {
@@ -649,7 +940,6 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   };
 
-  closeBtn.addEventListener("click", closeWindow);
   window.addEventListener("keydown", (e) => {
     if (e.key === "Escape") closeWindow();
   });

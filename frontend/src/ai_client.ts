@@ -1,4 +1,10 @@
-import { DEFAULT_SYSTEM_PROMPT, recordUsage, loadCustomProviders, type ProviderQuotaInfo } from "./settings";
+import {
+  DEFAULT_SYSTEM_PROMPT,
+  recordUsage,
+  loadCustomProviders,
+  expandQuickCommand,
+  type ProviderQuotaInfo,
+} from "./settings";
 import type { WindowPassport } from "./main";
 import type { ProviderType } from "./settings";
 
@@ -85,28 +91,29 @@ export async function streamAIResponse(
   history: HistoryMessage[] = [],
   callbacks: StreamCallbacks
 ): Promise<void> {
+  const effectiveQuery = expandQuickCommand(userQuery, content?.text, passport?.window_title);
   const provider = getActiveProvider();
 
   if (provider.startsWith("custom_")) {
-    await streamCustomProvider(provider, userQuery, passport, content, history, callbacks);
+    await streamCustomProvider(provider, effectiveQuery, passport, content, history, callbacks);
     return;
   }
 
   switch (provider) {
     case "auto":
-      await streamAutoWithFailover(userQuery, passport, content, history, callbacks);
+      await streamAutoWithFailover(effectiveQuery, passport, content, history, callbacks);
       break;
     case "gemini_key":
-      await streamGemini(userQuery, passport, content, history, callbacks);
+      await streamGemini(effectiveQuery, passport, content, history, callbacks);
       break;
     case "groq_key":
-      await streamGroq(userQuery, passport, content, history, callbacks);
+      await streamGroq(effectiveQuery, passport, content, history, callbacks);
       break;
     case "openrouter_key":
-      await streamOpenRouter(userQuery, passport, content, history, callbacks);
+      await streamOpenRouter(effectiveQuery, passport, content, history, callbacks);
       break;
     default:
-      await streamPublicPool(userQuery, passport, content, history, callbacks);
+      await streamPublicPool(effectiveQuery, passport, content, history, callbacks);
       break;
   }
 }
@@ -118,11 +125,11 @@ function buildSystemInstruction(passport: WindowPassport | null): string {
   const basePrompt = localStorage.getItem("ai_helper_system_prompt") || DEFAULT_SYSTEM_PROMPT;
   if (!passport) return basePrompt;
   return (
-    `${basePrompt}\n` +
-    `[Паспорт приложения пользователя]\n` +
-    `- Программа: ${passport.app_name} (${passport.process_name})\n` +
-    `- Заголовок окна: ${passport.window_title}\n` +
-    `- Среда: ${passport.is_wsl ? "WSL2 (Linux)" : passport.is_ssh ? "SSH" : "Windows Native"}`
+    `${basePrompt}\n\n` +
+    `[ACTIVE WINDOW ENVIRONMENT]\n` +
+    `- Process: ${passport.process_name} (${passport.app_name})\n` +
+    `- Window Title: "${passport.window_title}"\n` +
+    `- Subsystem: ${passport.is_wsl ? "WSL2 (Linux Ubuntu/Debian)" : passport.is_ssh ? "Remote SSH Session" : "Windows Native Win32"}`
   );
 }
 
