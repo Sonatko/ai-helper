@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="ru">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Настройки AI Helper</title>
+    <title>AI Settings</title>
     <link rel="stylesheet" href="./src/style.css" />
     <style>
       html, body {
@@ -11,407 +11,261 @@
         height: 100%;
         margin: 0;
         padding: 0;
-        background-color: #121316;
+        background-color: #111317;
         color: #f3f4f6;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
         box-sizing: border-box;
         user-select: none;
-        overflow-y: auto;
+        overflow: hidden;
       }
 
       body {
-        padding: 20px;
-      }
-
-      body::-webkit-scrollbar {
-        width: 6px;
-      }
-      body::-webkit-scrollbar-thumb {
-        background: #2a2e3d;
-        border-radius: 3px;
-      }
-
-      .settings-header {
+        padding: 16px 20px;
         display: flex;
-        align-items: center;
+        flex-direction: column;
         justify-content: space-between;
-        margin-bottom: 18px;
-        padding-bottom: 12px;
+      }
+
+      .header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding-bottom: 10px;
         border-bottom: 1px solid rgba(255, 255, 255, 0.08);
       }
 
-      .settings-title {
-        font-size: 17px;
+      .title {
+        font-size: 14px;
         font-weight: 600;
-        margin: 0;
         color: #ffffff;
+        display: flex;
+        align-items: center;
+        gap: 8px;
       }
 
-      .settings-subtitle {
-        font-size: 12px;
-        color: #9ca3af;
-        margin-top: 3px;
+      .form-container {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        margin-top: 10px;
       }
 
-      .settings-section {
-        background: #1a1c23;
-        border: 1px solid rgba(255, 255, 255, 0.07);
-        border-radius: 8px;
-        padding: 14px 16px;
-        margin-bottom: 14px;
+      .form-row {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
       }
 
-      .section-label {
-        font-size: 13px;
-        font-weight: 600;
-        color: #e5e7eb;
-        margin-bottom: 8px;
+      .form-label {
+        font-size: 11.5px;
+        font-weight: 500;
+        color: #94a3b8;
         display: flex;
         justify-content: space-between;
         align-items: center;
       }
 
-      .provider-selector {
+      .form-input-group {
         display: flex;
-        flex-direction: column;
-        gap: 8px;
-        margin-top: 6px;
-      }
-
-      .provider-option {
-        display: flex;
-        align-items: flex-start;
-        gap: 10px;
-        padding: 10px 12px;
-        background: #121317;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 6px;
-        cursor: pointer;
-        transition: border-color 0.15s ease, background 0.15s ease;
-      }
-
-      .provider-option.active {
-        border-color: #3b82f6;
-        background: rgba(59, 130, 246, 0.08);
-      }
-
-      .provider-option input[type="radio"] {
-        margin-top: 3px;
-        cursor: pointer;
-      }
-
-      .provider-text-title {
-        font-size: 13px;
-        font-weight: 600;
-        color: #ffffff;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-      }
-
-      .badge-free {
-        font-size: 10px;
-        background: rgba(16, 185, 129, 0.15);
-        color: #10b981;
-        border: 1px solid rgba(16, 185, 129, 0.3);
-        padding: 1px 6px;
-        border-radius: 4px;
-      }
-
-      .badge-auto {
-        font-size: 10px;
-        background: rgba(56, 189, 248, 0.15);
-        color: #38bdf8;
-        border: 1px solid rgba(56, 189, 248, 0.3);
-        padding: 1px 6px;
-        border-radius: 4px;
-      }
-
-      .provider-text-desc {
-        font-size: 11px;
-        color: #9ca3af;
-        margin-top: 2px;
-        line-height: 1.35;
-      }
-
-      .config-block {
-        margin-top: 12px;
-        padding-top: 12px;
-        border-top: 1px dashed rgba(255, 255, 255, 0.1);
-      }
-
-      .input-row {
-        display: flex;
-        gap: 8px;
+        gap: 6px;
         align-items: center;
       }
 
-      .styled-input, .styled-select {
-        flex: 1;
-        background: #111216;
-        border: 1px solid rgba(255, 255, 255, 0.12);
-        color: #ffffff;
-        padding: 8px 12px;
+      .styled-select, .styled-input {
+        width: 100%;
+        background: #171922;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        color: #f3f4f6;
+        padding: 7px 10px;
         border-radius: 6px;
-        font-size: 13px;
+        font-size: 12.5px;
         outline: none;
         box-sizing: border-box;
+        transition: border-color 0.15s ease;
       }
 
-      .styled-input:focus, .styled-select:focus {
-        border-color: #3b82f6;
+      .styled-select:focus, .styled-input:focus {
+        border-color: #38bdf8;
       }
 
-      .styled-select {
-        cursor: pointer;
-        width: 100%;
+      .styled-select optgroup {
+        background: #1e212b;
+        color: #38bdf8;
+        font-weight: 600;
+        font-size: 11px;
+      }
+
+      .styled-select option {
+        background: #14161c;
+        color: #f3f4f6;
+        font-size: 12px;
       }
 
       .styled-textarea {
         width: 100%;
-        height: 60px;
-        background: #111216;
-        border: 1px solid rgba(255, 255, 255, 0.12);
-        color: #ffffff;
-        padding: 8px 12px;
+        height: 48px;
+        background: #171922;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        color: #f3f4f6;
+        padding: 6px 10px;
         border-radius: 6px;
-        font-size: 12px;
+        font-size: 11.5px;
         outline: none;
         resize: none;
-        box-sizing: border-box;
         font-family: inherit;
-        line-height: 1.4;
+        box-sizing: border-box;
       }
-
       .styled-textarea:focus {
-        border-color: #3b82f6;
+        border-color: #38bdf8;
       }
 
       .btn {
-        background: #252833;
+        background: #202432;
         border: 1px solid rgba(255, 255, 255, 0.1);
-        color: #e5e7eb;
-        padding: 7px 12px;
+        color: #e2e8f0;
+        padding: 6px 12px;
         border-radius: 6px;
-        font-size: 12px;
+        font-size: 11.5px;
         cursor: pointer;
-        transition: background 0.15s ease;
         display: inline-flex;
         align-items: center;
-        gap: 6px;
+        gap: 5px;
         white-space: nowrap;
+        transition: background 0.15s ease;
       }
-      .btn:hover { background: #323644; }
+      .btn:hover { background: #2a3042; }
 
-      .btn:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-      }
-
-      .primary-btn {
-        background: #2563eb;
-        border-color: #3b82f6;
+      .btn-primary {
+        background: #0284c7;
+        border-color: #38bdf8;
         color: #ffffff;
-        font-weight: 500;
-        padding: 8px 16px;
       }
-      .primary-btn:hover { background: #1d4ed8; }
+      .btn-primary:hover { background: #0369a1; }
 
-      .status-pill {
+      .status-text {
         font-size: 11px;
-        margin-top: 6px;
+        color: #38bdf8;
+        min-height: 14px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .info-notice {
+        font-size: 11px;
+        color: #94a3b8;
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(255, 255, 255, 0.07);
+        padding: 7px 10px;
+        border-radius: 6px;
         line-height: 1.4;
       }
 
-      .settings-footer {
+      .footer {
         display: flex;
         justify-content: flex-end;
-        padding-top: 8px;
-        padding-bottom: 12px;
+        align-items: center;
+        padding-top: 10px;
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
       }
     </style>
   </head>
   <body>
-    <header class="settings-header">
-      <div>
-        <h1 class="settings-title">⚙️ Настройки AI Helper</h1>
-        <div class="settings-subtitle">Динамический опрос API и переключение моделей</div>
+    <!-- Header -->
+    <div class="header">
+      <div class="title">
+        <span>⚙️ AI Settings</span>
       </div>
-    </header>
+      <div id="status-msg" class="status-text"></div>
+    </div>
 
-    <!-- Provider Selection -->
-    <section class="settings-section">
-      <div class="section-label">
-        <span>Режим работы и провайдеры</span>
-      </div>
-      <div class="provider-selector">
-        <!-- 0. Smart AUTO Mode -->
-        <label class="provider-option active" id="opt-auto-label">
-          <input type="radio" name="provider" id="opt-auto" value="auto" checked />
-          <div>
-            <div class="provider-text-title">
-              <span>⚡ АВТО-выбор (Умный роутер + Failover)</span>
-              <span class="badge-auto">Рекомендуется</span>
-            </div>
-            <div class="provider-text-desc">
-              Автоматически направляет скриншоты в Gemini (мультимодальность), текст в Groq (скорость), а при 429 переключает на резерв.
-            </div>
+    <!-- Main Clean 3-Row Form -->
+    <div class="form-container">
+      <!-- 1. Provider Select -->
+      <div class="form-row">
+        <label class="form-label" for="provider-select">
+          <span>Provider</span>
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <button type="button" id="delete-provider-btn" class="btn" style="display: none; padding: 1px 6px; font-size: 10px; color: #ef4444; border-color: rgba(239, 68, 68, 0.3);" title="Delete this custom provider">Delete</button>
+            <span id="provider-badge" style="font-size: 10.5px; color: #10b981;">Ready</span>
           </div>
         </label>
+        <select id="provider-select" class="styled-select">
+          <optgroup label="Standard Providers">
+            <option value="auto">⚡ Auto Router</option>
+            <option value="gemini_key">Google Gemini API</option>
+            <option value="groq_key">Groq Cloud (Fast LPU)</option>
+            <option value="openrouter_key">OpenRouter Gateway</option>
+            <option value="public_pool">Public Pool (No key required)</option>
+          </optgroup>
+          <optgroup label="Custom Providers" id="custom-providers-group"></optgroup>
+          <option value="add_new_provider">➕ Add Custom Provider...</option>
+        </select>
+      </div>
 
-        <!-- 1. Default Public Pool -->
-        <label class="provider-option" id="opt-public-label">
-          <input type="radio" name="provider" id="opt-public" value="public_pool" />
-          <div>
-            <div class="provider-text-title">
-              <span>🌐 Общий бесплатный пул</span>
-              <span class="badge-free">Без ключа</span>
-            </div>
-            <div class="provider-text-desc">
-              Открытый шлюз сообщества (Pollinations). Работает со старта без регистрации.
-            </div>
+      <!-- 1b. Custom Provider Creation Card (Hidden by default) -->
+      <div id="add-provider-card" style="display: none; background: #151720; border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 6px; padding: 10px; margin-bottom: 2px;">
+        <div style="font-size: 12px; font-weight: 600; color: #38bdf8; margin-bottom: 8px;">➕ Add OpenAI-Compatible Provider</div>
+        <div style="display: flex; flex-direction: column; gap: 6px;">
+          <input type="text" id="new-provider-name" class="styled-input" placeholder="Name (e.g. DeepSeek API, Local Ollama, vLLM)" />
+          <input type="text" id="new-provider-url" class="styled-input" placeholder="Base URL (e.g. https://api.deepseek.com/v1)" />
+          <input type="password" id="new-provider-key" class="styled-input" placeholder="API Key (optional for local models)" />
+          <div style="display: flex; justify-content: flex-end; gap: 6px; margin-top: 4px;">
+            <button type="button" id="cancel-add-provider-btn" class="btn">Cancel</button>
+            <button type="button" id="save-new-provider-btn" class="btn btn-primary">Add Provider</button>
           </div>
+        </div>
+      </div>
+
+      <!-- 2. Dynamic Key Row -->
+      <div class="form-row" id="key-row">
+        <label class="form-label" for="key-input" id="key-label">
+          <span>API Key</span>
+          <a id="get-key-link" href="https://aistudio.google.com/app/apikey" target="_blank" style="color: #38bdf8; text-decoration: none;">Get key ↗</a>
         </label>
+        <div class="form-input-group">
+          <input type="password" id="key-input" class="styled-input" placeholder="Paste your API key here..." autocomplete="off" />
+          <button type="button" id="eye-btn" class="btn" title="Toggle visibility">👁️</button>
+          <button type="button" id="save-btn" class="btn btn-primary">Save</button>
+          <button type="button" id="refresh-btn" class="btn" title="Fetch latest models">🔄</button>
+        </div>
+      </div>
 
-        <!-- 2. Google AI Studio -->
-        <label class="provider-option" id="opt-gemini-label">
-          <input type="radio" name="provider" id="opt-gemini" value="gemini_key" />
-          <div>
-            <div class="provider-text-title">
-              <span>Google AI Studio</span>
-              <span class="badge-free">1500 запросов/день бесплатно</span>
-            </div>
-            <div class="provider-text-desc">
-              Личный ключ разработчика. Включает нативное распознавание скриншотов с экрана.
-            </div>
-          </div>
+      <!-- 2b. Secondary Endpoint input for Local / Custom (only visible for custom_local) -->
+      <div class="form-row" id="endpoint-row" style="display: none;">
+        <label class="form-label" for="endpoint-input">Base URL</label>
+        <div class="form-input-group">
+          <input type="text" id="endpoint-input" class="styled-input" placeholder="http://localhost:11434/v1" />
+          <button type="button" id="local-save-btn" class="btn btn-primary">Save URL</button>
+        </div>
+      </div>
+
+      <!-- 2c. Info Notice for Auto and Public modes -->
+      <div id="info-notice" class="info-notice" style="display: none;"></div>
+
+      <!-- 3. Model Select -->
+      <div class="form-row" id="model-row">
+        <label class="form-label" for="model-select">
+          <span>Model</span>
+          <span id="model-count-label" style="font-size: 10.5px; color: #94a3b8;"></span>
         </label>
+        <select id="model-select" class="styled-select"></select>
+      </div>
 
-        <!-- 3. Groq -->
-        <label class="provider-option" id="opt-groq-label">
-          <input type="radio" name="provider" id="opt-groq" value="groq_key" />
-          <div>
-            <div class="provider-text-title">
-              <span>Groq Cloud</span>
-              <span class="badge-free">Все модели 100% бесплатно</span>
-            </div>
-            <div class="provider-text-desc">
-              Сверхбыстрые LPU процессоры (~500 токенов/сек). Идеально для кода и мгновенного текста.
-            </div>
-          </div>
+      <!-- 4. System Instruction -->
+      <div class="form-row">
+        <label class="form-label" for="prompt-input">
+          <span>System Prompt</span>
+          <button type="button" id="reset-prompt-btn" class="btn" style="padding: 1px 6px; font-size: 10px;">Reset</button>
         </label>
-
-        <!-- 4. OpenRouter -->
-        <label class="provider-option" id="opt-openrouter-label">
-          <input type="radio" name="provider" id="opt-openrouter" value="openrouter_key" />
-          <div>
-            <div class="provider-text-title">
-              <span>OpenRouter</span>
-              <span class="badge-free">Каталог 0$</span>
-            </div>
-            <div class="provider-text-desc">
-              Единый шлюз. Позволяет выбрать любую из открытых моделей с нулевой стоимостью.
-            </div>
-          </div>
-        </label>
-
-        <!-- 5. Custom / Local Model -->
-        <label class="provider-option" id="opt-local-label">
-          <input type="radio" name="provider" id="opt-local" value="custom_local" />
-          <div>
-            <div class="provider-text-title">
-              <span>🖥️ Локальная модель / Свой API</span>
-              <span class="badge-free">100% Offline</span>
-            </div>
-            <div class="provider-text-desc">
-              Ollama, LM Studio, vLLM, LocalAI или любой другой OpenAI-совместимый локальный сервер.
-            </div>
-          </div>
-        </label>
+        <textarea id="prompt-input" class="styled-textarea" placeholder="Prompt..."></textarea>
       </div>
+    </div>
 
-      <!-- Config Area: Google Gemini -->
-      <div id="cfg-gemini" class="config-block" style="display: none;">
-        <div style="font-size: 11px; color: #9ca3af; margin-bottom: 6px;">
-          Бесплатный ключ из <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color: #60a5fa;">Google AI Studio</a>:
-        </div>
-        <div class="input-row">
-          <input type="password" id="gemini-key-input" class="styled-input" placeholder="AIzaSy..." autocomplete="off" />
-          <button id="gemini-eye-btn" class="btn">👁️</button>
-          <button id="gemini-save-btn" class="primary-btn" style="padding: 7px 12px;">Сохранить</button>
-          <button id="gemini-fetch-models-btn" class="btn" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.3);">🔄 Прозвонить модели</button>
-        </div>
-        <div id="gemini-status-msg" class="status-pill" style="color: #9ca3af;"></div>
-        <div id="gemini-models-container" style="margin-top: 8px; display: none;">
-          <label style="font-size: 11px; color: #9ca3af; display: block; margin-bottom: 4px;">Доступные модели Google API (с лимитами):</label>
-          <select id="gemini-model-select" class="styled-select"></select>
-        </div>
-      </div>
-
-      <!-- Config Area: Groq -->
-      <div id="cfg-groq" class="config-block" style="display: none;">
-        <div style="font-size: 11px; color: #9ca3af; margin-bottom: 6px;">
-          Бесплатный ключ из <a href="https://console.groq.com/keys" target="_blank" style="color: #60a5fa;">console.groq.com</a>:
-        </div>
-        <div class="input-row">
-          <input type="password" id="groq-key-input" class="styled-input" placeholder="gsk_..." autocomplete="off" />
-          <button id="groq-eye-btn" class="btn">👁️</button>
-          <button id="groq-save-btn" class="primary-btn" style="padding: 7px 12px;">Сохранить</button>
-          <button id="groq-fetch-models-btn" class="btn" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.3);">🔄 Прозвонить модели</button>
-        </div>
-        <div id="groq-status-msg" class="status-pill" style="color: #9ca3af;"></div>
-        <div id="groq-models-container" style="margin-top: 8px; display: none;">
-          <label style="font-size: 11px; color: #9ca3af; display: block; margin-bottom: 4px;">Доступные активные модели Groq (с контекстным окном):</label>
-          <select id="groq-model-select" class="styled-select"></select>
-        </div>
-      </div>
-
-      <!-- Config Area: OpenRouter -->
-      <div id="cfg-openrouter" class="config-block" style="display: none;">
-        <div style="font-size: 11px; color: #9ca3af; margin-bottom: 6px;">
-          Ключ из <a href="https://openrouter.ai/keys" target="_blank" style="color: #60a5fa;">openrouter.ai</a>:
-        </div>
-        <div class="input-row">
-          <input type="password" id="openrouter-key-input" class="styled-input" placeholder="sk-or-v1-..." autocomplete="off" />
-          <button id="openrouter-eye-btn" class="btn">👁️</button>
-          <button id="openrouter-save-btn" class="primary-btn" style="padding: 7px 12px;">Сохранить</button>
-          <button id="fetch-free-models-btn" class="btn" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.3);">🔍 Прозвонить 0$ модели</button>
-        </div>
-        <div id="openrouter-status-msg" class="status-pill" style="color: #9ca3af;"></div>
-        <div id="free-models-container" style="margin-top: 8px; display: none;">
-          <label style="font-size: 11px; color: #9ca3af; display: block; margin-bottom: 4px;">Список бесплатных моделей OpenRouter (0$ за токен):</label>
-          <select id="openrouter-model-select" class="styled-select"></select>
-        </div>
-      </div>
-
-      <!-- Config Area: Local / Custom Endpoint -->
-      <div id="cfg-local" class="config-block" style="display: none;">
-        <div style="font-size: 11px; color: #9ca3af; margin-bottom: 4px;">Адрес локального сервера (Base URL):</div>
-        <div class="input-row" style="margin-bottom: 8px;">
-          <input type="text" id="local-url-input" class="styled-input" placeholder="http://localhost:11434/v1" />
-          <button id="local-save-btn" class="primary-btn" style="padding: 7px 12px;">Сохранить</button>
-          <button id="local-fetch-models-btn" class="btn" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.3);">🔄 Прозвонить модели</button>
-        </div>
-        <div id="local-status-msg" class="status-pill" style="color: #9ca3af;"></div>
-        <div id="local-models-container" style="margin-top: 8px; display: none;">
-          <label style="font-size: 11px; color: #9ca3af; display: block; margin-bottom: 4px;">Обнаруженные локальные модели на машине:</label>
-          <select id="local-model-select" class="styled-select"></select>
-        </div>
-      </div>
-    </section>
-
-    <!-- Custom Prompt Instructions -->
-    <section class="settings-section">
-      <div class="section-label">
-        <span>Системная инструкция (Промпт лаконичности)</span>
-        <button id="reset-prompt-btn" class="btn" style="padding: 2px 8px; font-size: 11px;">По умолчанию</button>
-      </div>
-      <textarea id="prompt-input" class="styled-textarea"></textarea>
-    </section>
-
-    <footer class="settings-footer">
-      <button id="close-settings-btn" class="primary-btn">Готово</button>
-    </footer>
+    <!-- Footer -->
+    <div class="footer">
+      <button type="button" id="close-btn" class="btn">Done (Esc)</button>
+    </div>
 
     <script type="module" src="./src/settings.ts"></script>
   </body>

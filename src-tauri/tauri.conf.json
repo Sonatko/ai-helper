@@ -26,12 +26,12 @@
         "skipTaskbar": false
       },
       {
-        "title": "Настройки AI Helper",
+        "title": "AI Settings",
         "label": "settings",
         "url": "settings.html",
-        "width": 580,
-        "height": 640,
-        "resizable": true,
+        "width": 500,
+        "height": 430,
+        "resizable": false,
         "center": true,
         "visible": false,
         "decorations": true,

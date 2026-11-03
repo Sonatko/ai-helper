@@ -1,8 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow, PhysicalPosition } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
-import { streamAIResponse, getActiveProvider, getProviderBadge, type HistoryMessage } from "./ai_client";
-import { getDailyUsage } from "./settings";
+import {
+  streamAIResponse,
+  getActiveProvider,
+  getProviderBadge,
+  type HistoryMessage,
+} from "./ai_client";
+import { getProviderTelemetryStats, type ProviderQuotaInfo } from "./settings";
 
 /**
  * Window passport data structure received from the Rust Win32 backend.
@@ -122,31 +127,52 @@ window.addEventListener("DOMContentLoaded", () => {
   let currentSession: ChatSession = createNewSession();
   let selectedHistoryIndex = 0;
 
-  // 1. Dynamic Quota & Token Meter display
-  const updateQuotaDisplay = () => {
+  // 1. Dynamic Quota & Live Telemetry Meter display
+  const updateQuotaDisplay = (liveQuota?: ProviderQuotaInfo) => {
     const provider = getActiveProvider();
-    const badgeText = getProviderBadge();
+    const badgeText = liveQuota?.displayName || getProviderBadge();
+    const stats = getProviderTelemetryStats(provider);
 
-    if (provider === "public_pool") {
-      if (quotaTextEl) quotaTextEl.textContent = badgeText;
+    if (liveQuota?.remainingRequestsHeader) {
+      // Live hardware counter from Groq
+      if (quotaTextEl) {
+        quotaTextEl.textContent = `${badgeText} • За час: ${stats.requestsHour} зап. • Осталось сегодня: ${liveQuota.remainingRequestsHeader} RPD`;
+      }
       if (quotaProgressBar) {
         quotaProgressBar.style.width = "100%";
-        quotaProgressBar.style.background = "#10b981";
+        quotaProgressBar.style.background = "linear-gradient(90deg, #10b981, #38bdf8)";
       }
-    } else if (provider === "gemini_key") {
-      const usage = getDailyUsage();
-      const max = 1500;
-      if (quotaTextEl) quotaTextEl.textContent = `${usage.requestsCount}/${max} • ${badgeText}`;
-      if (quotaProgressBar) {
-        const pct = Math.min(100, Math.max(1, (usage.requestsCount / max) * 100));
-        quotaProgressBar.style.width = `${pct}%`;
-        quotaProgressBar.style.background = pct > 85 ? "#ef4444" : "linear-gradient(90deg, #38bdf8, #818cf8)";
+    } else if (provider === "gemini_key" || badgeText.includes("Gemini")) {
+      if (quotaTextEl) {
+        quotaTextEl.textContent = `${badgeText} • За час: ${stats.requestsHour} зап. (${stats.tokensHour} tok) • Сегодня: ${stats.requestsToday} зап. (${stats.tokensToday} tok)`;
       }
-    } else {
-      if (quotaTextEl) quotaTextEl.textContent = badgeText;
       if (quotaProgressBar) {
         quotaProgressBar.style.width = "100%";
         quotaProgressBar.style.background = "linear-gradient(90deg, #38bdf8, #818cf8)";
+      }
+    } else if (provider === "custom_local" || badgeText.includes("Local")) {
+      if (quotaTextEl) {
+        quotaTextEl.textContent = `${badgeText} • За час: ${stats.requestsHour} зап. (${stats.tokensHour} tok) • Сегодня: ${stats.requestsToday}`;
+      }
+      if (quotaProgressBar) {
+        quotaProgressBar.style.width = "100%";
+        quotaProgressBar.style.background = "linear-gradient(90deg, #34d399, #10b981)";
+      }
+    } else if (provider === "openrouter_key" || badgeText.includes("OpenRouter")) {
+      if (quotaTextEl) {
+        quotaTextEl.textContent = `${badgeText} • За час: ${stats.requestsHour} зап. (${stats.tokensHour} tok) • Сегодня: ${stats.requestsToday}`;
+      }
+      if (quotaProgressBar) {
+        quotaProgressBar.style.width = "100%";
+        quotaProgressBar.style.background = "linear-gradient(90deg, #a78bfa, #38bdf8)";
+      }
+    } else {
+      if (quotaTextEl) {
+        quotaTextEl.textContent = `${badgeText} • За час: ${stats.requestsHour} зап. (${stats.tokensHour} tok)`;
+      }
+      if (quotaProgressBar) {
+        quotaProgressBar.style.width = "100%";
+        quotaProgressBar.style.background = "#10b981";
       }
     }
   };
@@ -284,7 +310,7 @@ window.addEventListener("DOMContentLoaded", () => {
     updateQuotaDisplay();
     focusInput();
   });
-  window.addEventListener("storage", updateQuotaDisplay);
+  window.addEventListener("storage", () => updateQuotaDisplay());
 
   // 6. History List rendering and navigation
   const renderHistory = () => {
@@ -515,9 +541,14 @@ window.addEventListener("DOMContentLoaded", () => {
       onTokensUpdate: (promptTokens: number, candidateTokens: number, totalTokens: number) => {
         if (tokenCountEl) {
           if (promptTokens > 0) {
-            tokenCountEl.textContent = `⚡ ${totalTokens} токенов (${promptTokens} вход / ${candidateTokens} ответ)`;
+            tokenCountEl.textContent = `⚡ ${totalTokens} токенов (${promptTokens} вход • ${candidateTokens} ответ)`;
+            tokenCountEl.title =
+              `📥 Вход: ${promptTokens} токенов (вопрос + системная инструкция + контекст окна)\n` +
+              `📤 Ответ: ${candidateTokens} токенов (сгенерированный текст нейросети)\n` +
+              `Всего обработано: ${totalTokens} токенов`;
           } else {
-            tokenCountEl.textContent = `⚡ ~${totalTokens} токенов`;
+            tokenCountEl.textContent = `⚡ ${totalTokens} токенов`;
+            tokenCountEl.title = `Всего обработано токенов в этом запросе: ${totalTokens}`;
           }
         }
       },
@@ -529,11 +560,25 @@ window.addEventListener("DOMContentLoaded", () => {
         isStreaming = false;
         setTimeout(() => queryInput?.focus(), 50);
       },
-      onFinish: (fullText: string) => {
+      onFinish: (fullText: string, totalTokens: number, _modelUsed?: string, quotaInfo?: ProviderQuotaInfo) => {
         if (statusIndicator) {
           statusIndicator.textContent = "✓ Завершено";
         }
-        updateQuotaDisplay();
+        if (tokenCountEl && totalTokens > 0) {
+          const pTok = quotaInfo?.promptTokensLastRequest || 0;
+          const cTok = quotaInfo?.candidateTokensLastRequest || 0;
+          if (pTok > 0 && cTok > 0) {
+            tokenCountEl.textContent = `⚡ ${totalTokens} токенов (${pTok} вход • ${cTok} ответ)`;
+            tokenCountEl.title =
+              `📥 Вход: ${pTok} токенов (вопрос + системная инструкция + контекст окна)\n` +
+              `📤 Ответ: ${cTok} токенов (сгенерированный текст нейросети)\n` +
+              `Всего обработано: ${totalTokens} токенов`;
+          } else {
+            tokenCountEl.textContent = `⚡ ${totalTokens} токенов`;
+            tokenCountEl.title = `Всего обработано токенов в этом запросе: ${totalTokens}`;
+          }
+        }
+        updateQuotaDisplay(quotaInfo);
         isStreaming = false;
 
         // Save assistant message to current session

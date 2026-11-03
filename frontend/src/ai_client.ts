@@ -1,4 +1,4 @@
-import { DEFAULT_SYSTEM_PROMPT, recordUsage } from "./settings";
+import { DEFAULT_SYSTEM_PROMPT, recordUsage, loadCustomProviders, type ProviderQuotaInfo } from "./settings";
 import type { WindowPassport } from "./main";
 import type { ProviderType } from "./settings";
 
@@ -11,7 +11,7 @@ export interface StreamCallbacks {
   onChunk: (text: string) => void;
   onTokensUpdate: (promptTokens: number, candidateTokens: number, totalTokens: number) => void;
   onError: (errorMessage: string) => void;
-  onFinish: (fullText: string, totalTokens: number) => void;
+  onFinish: (fullText: string, totalTokens: number, modelUsed?: string, quotaInfo?: ProviderQuotaInfo) => void;
 }
 
 export interface CapturedContentPayload {
@@ -30,34 +30,38 @@ export function getActiveProvider(): ProviderType {
 }
 
 /**
+ * Returns the last model info actually executed to render in UI.
+ */
+export function getLastExecutedModel(): string {
+  return localStorage.getItem("ai_helper_last_executed_model") || "";
+}
+
+/**
  * Generates an informative UI badge showing the active provider and model.
  */
 export function getProviderBadge(): string {
+  const lastExecuted = getLastExecutedModel();
+  if (lastExecuted) {
+    return lastExecuted;
+  }
+
   const provider = getActiveProvider();
+  if (provider.startsWith("custom_")) {
+    const list = loadCustomProviders();
+    const cp = list.find((c) => c.id === provider);
+    const model = localStorage.getItem(`ai_helper_model_${provider}`) || "default";
+    return `🖥️ ${cp ? cp.name : "Custom"} (${model})`;
+  }
+
   switch (provider) {
-    case "auto": {
-      const hasGemini = !!(
-        localStorage.getItem("ai_helper_gemini_api_key") ||
-        (import.meta.env.VITE_GEMINI_API_KEY as string)
-      );
-      const hasGroq = !!localStorage.getItem("ai_helper_groq_api_key");
-      const hasOpenRouter = !!(
-        localStorage.getItem("ai_helper_openrouter_api_key") ||
-        (import.meta.env.VITE_OPENROUTER_API_KEY as string)
-      );
-      const parts = [];
-      if (hasGroq) parts.push("Groq");
-      if (hasGemini) parts.push("Gemini");
-      if (hasOpenRouter) parts.push("OpenRouter");
-      const chain = parts.length > 0 ? parts.join(" + ") : "Умный роутер";
-      return `⚡ АВТО (${chain})`;
-    }
+    case "auto":
+      return "⚡ Auto Router";
     case "gemini_key": {
-      const model = localStorage.getItem("ai_helper_gemini_model") || "gemini-2.0-flash";
-      return `Google AI Studio (${model})`;
+      const model = localStorage.getItem("ai_helper_gemini_model") || "gemini-2.5-flash";
+      return `Google Gemini (${model})`;
     }
     case "groq_key": {
-      const model = localStorage.getItem("ai_helper_groq_model") || "llama-3.3-70b";
+      const model = localStorage.getItem("ai_helper_groq_model") || "llama-3.3-70b-versatile";
       const short = model.split("-")[0] || model;
       return `Groq LPU (${short})`;
     }
@@ -66,12 +70,8 @@ export function getProviderBadge(): string {
       const shortName = model.split("/").pop()?.replace(":free", "") || model;
       return `OpenRouter (${shortName})`;
     }
-    case "custom_local": {
-      const model = localStorage.getItem("ai_helper_local_model") || "Локальная модель";
-      return `🖥️ Local (${model})`;
-    }
     default:
-      return "Общий бесплатный пул";
+      return "Public Pool";
   }
 }
 
@@ -87,6 +87,11 @@ export async function streamAIResponse(
 ): Promise<void> {
   const provider = getActiveProvider();
 
+  if (provider.startsWith("custom_")) {
+    await streamCustomProvider(provider, userQuery, passport, content, history, callbacks);
+    return;
+  }
+
   switch (provider) {
     case "auto":
       await streamAutoWithFailover(userQuery, passport, content, history, callbacks);
@@ -99,9 +104,6 @@ export async function streamAIResponse(
       break;
     case "openrouter_key":
       await streamOpenRouter(userQuery, passport, content, history, callbacks);
-      break;
-    case "custom_local":
-      await streamCustomLocal(userQuery, passport, content, history, callbacks);
       break;
     default:
       await streamPublicPool(userQuery, passport, content, history, callbacks);
@@ -160,47 +162,54 @@ async function streamAutoWithFailover(
     if (geminiKey) {
       candidates.push({
         name: "Google Gemini (Vision)",
-        run: (cbs) => streamGemini(userQuery, passport, content, history, cbs),
+        run: (cbs) => streamGemini(userQuery, passport, content, history, cbs, true),
       });
     }
     if (openRouterKey) {
       candidates.push({
         name: "OpenRouter (Vision)",
-        run: (cbs) => streamOpenRouter(userQuery, passport, content, history, cbs),
+        run: (cbs) => streamOpenRouter(userQuery, passport, content, history, cbs, true),
       });
     }
     candidates.push({
       name: "Общий бесплатный пул",
-      run: (cbs) => streamPublicPool(userQuery, passport, content, history, cbs),
+      run: (cbs) => streamPublicPool(userQuery, passport, content, history, cbs, true),
     });
   } else {
     if (groqKey) {
       candidates.push({
         name: "Groq Cloud (LPU)",
-        run: (cbs) => streamGroq(userQuery, passport, content, history, cbs),
+        run: (cbs) => streamGroq(userQuery, passport, content, history, cbs, true),
       });
     }
     if (geminiKey) {
       candidates.push({
         name: "Google Gemini",
-        run: (cbs) => streamGemini(userQuery, passport, content, history, cbs),
+        run: (cbs) => streamGemini(userQuery, passport, content, history, cbs, true),
       });
     }
     if (localUrl) {
       candidates.push({
         name: "Local Offline LLM",
-        run: (cbs) => streamCustomLocal(userQuery, passport, content, history, cbs),
+        run: (cbs) => streamCustomLocal(userQuery, passport, content, history, cbs, true),
       });
     }
     if (openRouterKey) {
       candidates.push({
         name: "OpenRouter",
-        run: (cbs) => streamOpenRouter(userQuery, passport, content, history, cbs),
+        run: (cbs) => streamOpenRouter(userQuery, passport, content, history, cbs, true),
       });
     }
+    const customList = loadCustomProviders();
+    customList.forEach((cp) => {
+      candidates.push({
+        name: cp.name,
+        run: (cbs) => streamCustomProvider(cp.id, userQuery, passport, content, history, cbs, true),
+      });
+    });
     candidates.push({
-      name: "Общий бесплатный пул",
-      run: (cbs) => streamPublicPool(userQuery, passport, content, history, cbs),
+      name: "Public Pool",
+      run: (cbs) => streamPublicPool(userQuery, passport, content, history, cbs, true),
     });
   }
 
@@ -220,8 +229,8 @@ async function streamAutoWithFailover(
       onError: (errMsg) => {
         candidateError = errMsg;
       },
-      onFinish: (fullText, tokens) => {
-        callbacks.onFinish(fullText, tokens);
+      onFinish: (fullText, tokens, modelUsed, quotaInfo) => {
+        callbacks.onFinish(fullText, tokens, modelUsed, quotaInfo);
       },
     };
 
@@ -254,7 +263,8 @@ async function streamPublicPool(
   passport: WindowPassport | null,
   content: CapturedContentPayload | null,
   history: HistoryMessage[],
-  callbacks: StreamCallbacks
+  callbacks: StreamCallbacks,
+  isAuto = false
 ): Promise<void> {
   const systemText = buildSystemInstruction(passport);
   let userText = userQuery;
@@ -268,8 +278,9 @@ async function streamPublicPool(
   }));
 
   const endpoint = "https://text.pollinations.ai/openai/chat/completions";
+  const modelName = "openai-fast";
   const body = {
-    model: "openai-fast",
+    model: modelName,
     messages: [
       { role: "system", content: systemText },
       ...priorMessages,
@@ -278,7 +289,8 @@ async function streamPublicPool(
     stream: true,
   };
 
-  await streamOpenAICompatible(endpoint, body, "", callbacks);
+  const displayName = isAuto ? `⚡ АВТО ➔ Открытый пул (${modelName})` : `Открытый пул (${modelName})`;
+  await streamOpenAICompatible(endpoint, body, "", "public_pool", modelName, displayName, callbacks);
 }
 
 /**
@@ -289,7 +301,8 @@ async function streamGroq(
   passport: WindowPassport | null,
   content: CapturedContentPayload | null,
   history: HistoryMessage[],
-  callbacks: StreamCallbacks
+  callbacks: StreamCallbacks,
+  isAuto = false
 ): Promise<void> {
   const apiKey = localStorage.getItem("ai_helper_groq_api_key") || "";
   if (!apiKey) {
@@ -320,7 +333,8 @@ async function streamGroq(
     stream: true,
   };
 
-  await streamOpenAICompatible(endpoint, body, apiKey, callbacks);
+  const displayName = isAuto ? `⚡ АВТО ➔ Groq LPU (${model.split("-")[0]})` : `Groq LPU (${model})`;
+  await streamOpenAICompatible(endpoint, body, apiKey, "groq_key", model, displayName, callbacks);
 }
 
 /**
@@ -331,7 +345,8 @@ async function streamOpenRouter(
   passport: WindowPassport | null,
   content: CapturedContentPayload | null,
   history: HistoryMessage[],
-  callbacks: StreamCallbacks
+  callbacks: StreamCallbacks,
+  isAuto = false
 ): Promise<void> {
   const apiKey =
     localStorage.getItem("ai_helper_openrouter_api_key") ||
@@ -384,10 +399,22 @@ async function streamOpenRouter(
     stream: true,
   };
 
-  await streamOpenAICompatible(endpoint, body, apiKey, callbacks, {
-    "HTTP-Referer": "https://github.com/ai-helper-desktop",
-    "X-Title": "AI Helper Desktop",
-  });
+  const shortName = model.split("/").pop()?.replace(":free", "") || model;
+  const displayName = isAuto ? `⚡ АВТО ➔ OpenRouter (${shortName})` : `OpenRouter (${shortName})`;
+
+  await streamOpenAICompatible(
+    endpoint,
+    body,
+    apiKey,
+    "openrouter_key",
+    model,
+    displayName,
+    callbacks,
+    {
+      "HTTP-Referer": "https://github.com/ai-helper-desktop",
+      "X-Title": "AI Helper Desktop",
+    }
+  );
 }
 
 /**
@@ -398,7 +425,8 @@ async function streamGemini(
   passport: WindowPassport | null,
   content: CapturedContentPayload | null,
   history: HistoryMessage[],
-  callbacks: StreamCallbacks
+  callbacks: StreamCallbacks,
+  isAuto = false
 ): Promise<void> {
   const apiKey =
     localStorage.getItem("ai_helper_gemini_api_key") ||
@@ -471,6 +499,8 @@ async function streamGemini(
     let accumulatedText = "";
     let buffer = "";
     let totalTokens = 0;
+    let promptTokens = 0;
+    let candidateTokens = 0;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -499,18 +529,38 @@ async function streamGemini(
             }
 
             if (data.usageMetadata) {
-              const pTokens = data.usageMetadata.promptTokenCount || 0;
-              const cTokens = data.usageMetadata.candidatesTokenCount || 0;
-              totalTokens = data.usageMetadata.totalTokenCount || pTokens + cTokens;
-              callbacks.onTokensUpdate(pTokens, cTokens, totalTokens);
+              promptTokens = data.usageMetadata.promptTokenCount || promptTokens;
+              candidateTokens = data.usageMetadata.candidatesTokenCount || candidateTokens;
+              totalTokens = data.usageMetadata.totalTokenCount || promptTokens + candidateTokens;
+              callbacks.onTokensUpdate(promptTokens, candidateTokens, totalTokens);
             }
           } catch {}
         }
       }
     }
 
-    recordUsage(totalTokens);
-    callbacks.onFinish(accumulatedText, totalTokens);
+    // Record usage in telemetries
+    const usage = recordUsage("gemini_key", model, totalTokens, promptTokens, candidateTokens);
+
+    const isVision = content?.mode === "screenshot" && !!content.jpegBase64;
+    const modelLabel = `${model}${isVision ? " [📷 Vision]" : ""}`;
+    const displayName = isAuto ? `⚡ АВТО ➔ Google Gemini (${modelLabel})` : `Google Gemini (${modelLabel})`;
+    localStorage.setItem("ai_helper_last_executed_model", displayName);
+
+    const quotaInfo: ProviderQuotaInfo = {
+      provider: "gemini_key",
+      model: model,
+      displayName: displayName,
+      requestsToday: usage.requestsToday,
+      requestsHour: usage.requestsHour,
+      tokensToday: usage.tokensToday,
+      tokensHour: usage.tokensHour,
+      tokensLastRequest: totalTokens,
+      promptTokensLastRequest: promptTokens,
+      candidateTokensLastRequest: candidateTokens,
+    };
+
+    callbacks.onFinish(accumulatedText, totalTokens, displayName, quotaInfo);
   } catch (err: any) {
     callbacks.onError(`Ошибка API: ${err.message || err}`);
   }
@@ -524,7 +574,8 @@ async function streamCustomLocal(
   passport: WindowPassport | null,
   content: CapturedContentPayload | null,
   history: HistoryMessage[],
-  callbacks: StreamCallbacks
+  callbacks: StreamCallbacks,
+  isAuto = false
 ): Promise<void> {
   const baseUrl = (localStorage.getItem("ai_helper_local_url") || "http://localhost:11434/v1").replace(/\/+$/, "");
   const model = localStorage.getItem("ai_helper_local_model") || "llama3";
@@ -551,7 +602,57 @@ async function streamCustomLocal(
     stream: true,
   };
 
-  await streamOpenAICompatible(endpoint, body, "", callbacks);
+  const apiKey = localStorage.getItem("ai_helper_local_key") || "";
+  const displayName = isAuto ? `⚡ АВТО ➔ 🖥️ Local (${model})` : `🖥️ Local (${model})`;
+  await streamOpenAICompatible(endpoint, body, apiKey, "custom_local", model, displayName, callbacks);
+}
+
+/**
+ * Universal runner for user-defined custom OpenAI-compatible providers.
+ */
+async function streamCustomProvider(
+  providerId: string,
+  userQuery: string,
+  passport: WindowPassport | null,
+  content: CapturedContentPayload | null,
+  history: HistoryMessage[],
+  callbacks: StreamCallbacks,
+  isAuto = false
+): Promise<void> {
+  const list = loadCustomProviders();
+  const cp = list.find((c) => c.id === providerId);
+  if (!cp) {
+    callbacks.onError(`Provider ${providerId} not found in configuration`);
+    return;
+  }
+
+  const baseUrl = cp.baseUrl.replace(/\/+$/, "");
+  const model = localStorage.getItem(`ai_helper_model_${providerId}`) || "default";
+  const systemText = buildSystemInstruction(passport);
+
+  let userText = userQuery;
+  if (content?.mode === "text" && content.text) {
+    userText = `[Выделенный фрагмент]:\n${content.text}\n\n[Вопрос]: ${userQuery}`;
+  }
+
+  const priorMessages = history.slice(-8).map((m) => ({
+    role: m.role,
+    content: m.content,
+  }));
+
+  const endpoint = `${baseUrl}/chat/completions`;
+  const body = {
+    model: model,
+    messages: [
+      { role: "system", content: systemText },
+      ...priorMessages,
+      { role: "user", content: userText },
+    ],
+    stream: true,
+  };
+
+  const displayName = isAuto ? `⚡ АВТО ➔ 🖥️ ${cp.name} (${model})` : `🖥️ ${cp.name} (${model})`;
+  await streamOpenAICompatible(endpoint, body, cp.apiKey || "", providerId, model, displayName, callbacks);
 }
 
 /**
@@ -561,6 +662,9 @@ async function streamOpenAICompatible(
   endpoint: string,
   body: any,
   apiKey: string,
+  provider: ProviderType,
+  modelName: string,
+  displayName: string,
   callbacks: StreamCallbacks,
   extraHeaders: Record<string, string> = {}
 ): Promise<void> {
@@ -590,6 +694,12 @@ async function streamOpenAICompatible(
       return;
     }
 
+    // Capture live hardware headers from provider (Groq / OpenRouter)
+    let remainingRequestsHeader = response.headers.get("x-ratelimit-remaining-requests");
+    let remainingTokensHeader = response.headers.get("x-ratelimit-remaining-tokens");
+    let resetRequestsHeader = response.headers.get("x-ratelimit-reset-requests");
+    let resetTokensHeader = response.headers.get("x-ratelimit-reset-tokens");
+
     if (!response.body) {
       callbacks.onError("Пустой ответ от сервера.");
       return;
@@ -599,6 +709,9 @@ async function streamOpenAICompatible(
     const decoder = new TextDecoder("utf-8");
     let accumulatedText = "";
     let buffer = "";
+    let totalPromptTokens = 0;
+    let totalCompletionTokens = 0;
+    let exactTotalTokens = 0;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -620,17 +733,45 @@ async function streamOpenAICompatible(
             if (delta) {
               accumulatedText += delta;
               callbacks.onChunk(delta);
-              const estTokens = Math.max(1, Math.round(accumulatedText.length / 3.6));
-              callbacks.onTokensUpdate(0, estTokens, estTokens);
+              const est = Math.max(1, Math.round(accumulatedText.length / 3.6));
+              callbacks.onTokensUpdate(0, est, est);
+            }
+
+            // If provider provides exact usage object in chunk (OpenAI/Groq/OpenRouter standard)
+            if (data.usage) {
+              totalPromptTokens = data.usage.prompt_tokens || totalPromptTokens;
+              totalCompletionTokens = data.usage.completion_tokens || totalCompletionTokens;
+              exactTotalTokens = data.usage.total_tokens || totalPromptTokens + totalCompletionTokens;
+              callbacks.onTokensUpdate(totalPromptTokens, totalCompletionTokens, exactTotalTokens);
             }
           } catch {}
         }
       }
     }
 
-    const totalEstTokens = Math.max(1, Math.round(accumulatedText.length / 3.6));
-    recordUsage(totalEstTokens);
-    callbacks.onFinish(accumulatedText, totalEstTokens);
+    const finalTokens = exactTotalTokens > 0 ? exactTotalTokens : Math.max(1, Math.round(accumulatedText.length / 3.6));
+    const usage = recordUsage(provider, modelName, finalTokens, totalPromptTokens, totalCompletionTokens);
+
+    localStorage.setItem("ai_helper_last_executed_model", displayName);
+
+    const quotaInfo: ProviderQuotaInfo = {
+      provider: provider,
+      model: modelName,
+      displayName: displayName,
+      requestsToday: usage.requestsToday,
+      requestsHour: usage.requestsHour,
+      tokensToday: usage.tokensToday,
+      tokensHour: usage.tokensHour,
+      tokensLastRequest: finalTokens,
+      promptTokensLastRequest: totalPromptTokens,
+      candidateTokensLastRequest: totalCompletionTokens,
+      remainingRequestsHeader: remainingRequestsHeader || undefined,
+      remainingTokensHeader: remainingTokensHeader || undefined,
+      resetRequestsHeader: resetRequestsHeader || undefined,
+      resetTokensHeader: resetTokensHeader || undefined,
+    };
+
+    callbacks.onFinish(accumulatedText, finalTokens, displayName, quotaInfo);
   } catch (err: any) {
     callbacks.onError(`Ошибка соединения: ${err.message || err}`);
   }
