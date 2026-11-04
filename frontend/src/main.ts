@@ -5,6 +5,7 @@ import {
   streamAIResponse,
   getActiveProvider,
   getProviderBadge,
+  isVisionSupported,
   type HistoryMessage,
 } from "./ai_client";
 import {
@@ -13,6 +14,7 @@ import {
   type ProviderQuotaInfo,
   type QuickCommand,
 } from "./settings";
+import { renderMarkdown } from "./markdown";
 
 /**
  * Window passport data structure received from the Rust Win32 backend.
@@ -46,7 +48,7 @@ export interface WindowPassport {
  */
 export type CapturedContent =
   | { type: "Text"; payload: string }
-  | { type: "Screenshot"; payload: { base64: string; width: number; height: number } }
+  | { type: "Screenshot"; payload: { base64: string; width: number; height: number; is_crop?: boolean } }
   | { type: "Empty" };
 
 /**
@@ -57,6 +59,7 @@ export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   timestamp: string;
+  image?: string;
 }
 
 /**
@@ -71,25 +74,25 @@ export interface ChatSession {
   passport?: WindowPassport | null;
 }
 
-const STORAGE_KEY_SESSIONS = "ai_helper_sessions_v1";
-
-function loadSessions(): ChatSession[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_SESSIONS);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
+/**
+ * Persistent SQLite Database records matching the Rust storage backend.
+ */
+export interface SessionRecord {
+  id: string;
+  title: string;
+  created_at: number;
+  updated_at: number;
+  model_used: string;
 }
 
-function saveSessions(sessions: ChatSession[]): void {
-  try {
-    // Keep up to 35 most recent sessions
-    const trimmed = sessions.slice(0, 35);
-    localStorage.setItem(STORAGE_KEY_SESSIONS, JSON.stringify(trimmed));
-  } catch (err) {
-    console.warn("Failed to persist sessions:", err);
-  }
+export interface MessageRecord {
+  id: string;
+  session_id: string;
+  role: string;
+  content: string;
+  tokens: number;
+  created_at: number;
+  image_data?: string;
 }
 
 function createNewSession(): ChatSession {
@@ -107,7 +110,11 @@ function createNewSession(): ChatSession {
 window.addEventListener("DOMContentLoaded", () => {
   const queryInput = document.getElementById("query-input") as HTMLInputElement | null;
   const badgePill = document.getElementById("badge-pill") as HTMLElement | null;
-  const capsuleNewBtn = document.getElementById("capsule-new-btn") as HTMLButtonElement | null;
+  const badgePillText = document.getElementById("badge-pill-text") as HTMLElement | null;
+  const badgePreviewPopup = document.getElementById("badge-preview-popup") as HTMLElement | null;
+  const badgePreviewImg = document.getElementById("badge-preview-img") as HTMLImageElement | null;
+  const threadPill = document.getElementById("thread-pill") as HTMLElement | null;
+  const threadText = document.getElementById("thread-text") as HTMLElement | null;
   const capsuleHistoryBtn = document.getElementById("capsule-history-btn") as HTMLButtonElement | null;
   const historyPanel = document.getElementById("history-panel") as HTMLElement | null;
   const historyList = document.getElementById("history-list") as HTMLElement | null;
@@ -167,6 +174,7 @@ window.addEventListener("DOMContentLoaded", () => {
   // Active Multi-turn Session state
   let currentSession: ChatSession = createNewSession();
   let selectedHistoryIndex = 0;
+  let cachedSessions: SessionRecord[] = [];
 
   // 1. Dynamic Quota & Live Telemetry Meter display
   const updateQuotaDisplay = (liveQuota?: ProviderQuotaInfo) => {
@@ -220,6 +228,50 @@ window.addEventListener("DOMContentLoaded", () => {
 
   updateQuotaDisplay();
 
+  // Active Thread Indicator (Minimalist: hidden when new, visible only when continuing a dialogue)
+  const updateSessionBadge = () => {
+    if (!threadPill || !threadText) return;
+    const isNew = currentSession.messages.length === 0;
+
+    if (isNew) {
+      threadPill.classList.add("hidden");
+      if (queryInput) {
+        queryInput.placeholder = "Спроси что угодно... (Enter для отправки)";
+      }
+    } else {
+      const count = currentSession.messages.length;
+      const shortTitle =
+        currentSession.title.length > 12
+          ? `${currentSession.title.slice(0, 12)}...`
+          : currentSession.title;
+      threadText.textContent = `💬 ${shortTitle} (${count})`;
+      threadPill.title = `Ветка: «${currentSession.title}» (${count} сообщ.). Кликните для просмотра. Нажмите ✕ (Ctrl+N), чтобы начать новый диалог.`;
+      threadPill.classList.remove("hidden");
+      if (queryInput) {
+        queryInput.placeholder = "Ответить в ветку... (Enter для отправки)";
+      }
+    }
+  };
+
+  if (threadPill) {
+    threadPill.addEventListener("click", async (e) => {
+      const target = e.target as HTMLElement;
+      if (target.id === "thread-reset-btn" || target.classList.contains("thread-reset")) {
+        e.stopPropagation();
+        await startNewSession();
+        return;
+      }
+      if (currentSession.messages.length > 0) {
+        renderSessionMessages(currentSession);
+        await showResponseMode();
+      } else {
+        queryInput?.focus();
+      }
+    });
+  }
+
+  updateSessionBadge();
+
   // 2. Window expansion / view modes (Strictly mutually exclusive)
   const showResponseMode = async () => {
     if (historyPanel) historyPanel.classList.add("hidden");
@@ -233,7 +285,7 @@ window.addEventListener("DOMContentLoaded", () => {
   const showHistoryMode = async () => {
     if (responsePanel) responsePanel.classList.add("hidden");
     selectedHistoryIndex = 0;
-    renderHistory();
+    await fetchAndRenderHistory();
     if (historyPanel) historyPanel.classList.remove("hidden");
     if (!isExpanded) {
       await invoke("expand_window");
@@ -244,10 +296,12 @@ window.addEventListener("DOMContentLoaded", () => {
   const collapseAll = async () => {
     if (historyPanel) historyPanel.classList.add("hidden");
     if (responsePanel) responsePanel.classList.add("hidden");
-    if (isExpanded) {
+    try {
       await invoke("collapse_window");
-      isExpanded = false;
+    } catch (err) {
+      console.error("[AI Helper] Failed to collapse window:", err);
     }
+    isExpanded = false;
   };
 
   // 3. Render Session messages in Response View
@@ -260,14 +314,18 @@ window.addEventListener("DOMContentLoaded", () => {
       turnEl.className = "chat-turn";
 
       if (msg.role === "user") {
+        const imgHtml = msg.image
+          ? `<div class="chat-attached-image-wrap"><img src="${msg.image}" class="chat-attached-image" alt="Captured snippet" /></div>`
+          : "";
         turnEl.innerHTML = `
           <div class="chat-user-row">
+            ${imgHtml}
             <div class="chat-user-bubble">${escapeHtml(msg.content)}</div>
           </div>
         `;
       } else {
         turnEl.innerHTML = `
-          <div class="chat-assistant-bubble">${escapeHtml(msg.content)}</div>
+          <div class="chat-assistant-bubble">${renderMarkdown(msg.content)}</div>
         `;
       }
       responseContent.appendChild(turnEl);
@@ -300,6 +358,7 @@ window.addEventListener("DOMContentLoaded", () => {
     if (tokenCountEl) {
       tokenCountEl.textContent = "⚡ 0 токенов";
     }
+    updateSessionBadge();
     focusInput();
   };
 
@@ -323,17 +382,45 @@ window.addEventListener("DOMContentLoaded", () => {
 
   const updateContextBadge = () => {
     if (!badgePill) return;
+
+    const setText = (txt: string, title: string) => {
+      if (badgePillText) {
+        badgePillText.textContent = txt;
+      } else {
+        badgePill.textContent = txt;
+      }
+      badgePill.title = title;
+      badgePill.classList.remove("hidden");
+    };
+
+    const app = currentPassport?.app_name || currentPassport?.process_name || "Окно";
+
     if (currentContent && currentContent.type === "Text") {
-      badgePill.textContent = "📝 Выделено";
-      badgePill.title = `Выделенный текст: ${currentContent.payload.slice(0, 60)}...`;
-      badgePill.classList.remove("hidden");
+      const len = currentContent.payload.length;
+      setText(`📝 Текст (${len} симв.) • ${app}`, `Выделенный текст (${len} симв.) из ${app}`);
+      if (badgePreviewPopup) badgePreviewPopup.classList.add("hidden");
     } else if (currentContent && currentContent.type === "Screenshot") {
-      const app = currentPassport?.app_name || "Окно";
-      badgePill.textContent = `📷 ${app}`;
-      badgePill.title = `Снимок окна: ${currentPassport?.window_title || ""}`;
-      badgePill.classList.remove("hidden");
+      const isCrop = !!currentContent.payload.is_crop;
+      const dims = `${currentContent.payload.width}×${currentContent.payload.height} px`;
+      const prefix = isCrop ? "✂️ Область" : "📷 Окно";
+
+      setText(
+        `${prefix} (${dims}) • ${app}`,
+        isCrop
+          ? `Вырезанная область (${dims}) из окна ${app} (${currentPassport?.window_title || ""})`
+          : `Снимок окна (${dims}): ${currentPassport?.window_title || ""}`
+      );
+
+      if (badgePreviewPopup && badgePreviewImg && currentContent.payload.base64) {
+        badgePreviewImg.src = currentContent.payload.base64;
+        badgePreviewPopup.classList.remove("hidden");
+      }
+    } else if (currentPassport) {
+      setText(`🖥️ ${app}`, `Паспорт окна: ${currentPassport.window_title || app}`);
+      if (badgePreviewPopup) badgePreviewPopup.classList.add("hidden");
     } else {
       badgePill.classList.add("hidden");
+      if (badgePreviewPopup) badgePreviewPopup.classList.add("hidden");
     }
   };
 
@@ -346,33 +433,54 @@ window.addEventListener("DOMContentLoaded", () => {
     } catch {}
   });
 
+  listen("app_summoned", async () => {
+    updateQuotaDisplay();
+    updateSessionBadge();
+    queryInput?.focus();
+    if (!isExpanded) {
+      queryInput?.select();
+    }
+    setTimeout(() => {
+      queryInput?.focus();
+      if (!isExpanded) {
+        queryInput?.select();
+      }
+    }, 25);
+    try {
+      currentPassport = await invoke<WindowPassport | null>("get_last_passport");
+      currentContent = await invoke<CapturedContent | null>("get_last_content");
+      updateContextBadge();
+    } catch {}
+  });
+
+  collapseAll();
   focusInput();
   window.addEventListener("focus", () => {
     updateQuotaDisplay();
+    updateSessionBadge();
     focusInput();
   });
+
   window.addEventListener("storage", () => updateQuotaDisplay());
 
-  // 6. History List rendering and navigation
-  const renderHistory = () => {
-    const sessions = loadSessions();
-
+  // 6. SQLite-backed History List rendering and navigation
+  const renderHistoryUI = () => {
     if (!historyList) return;
     historyList.innerHTML = "";
 
-    if (sessions.length === 0) {
+    if (cachedSessions.length === 0) {
       historyList.innerHTML =
         '<div style="padding: 24px; color: #64748b; font-size: 13px; text-align: center;">История диалогов пуста</div>';
       return;
     }
 
-    sessions.forEach((sess, idx) => {
+    cachedSessions.forEach((sess, idx) => {
       const itemEl = document.createElement("div");
       itemEl.className = `history-item ${idx === selectedHistoryIndex ? "selected" : ""}`;
       itemEl.tabIndex = 0;
 
-      const lastMsg = sess.messages[sess.messages.length - 1]?.content || "Пустой диалог";
-      const dateStr = new Date(sess.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      const dateStr = new Date(sess.updated_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      const modelBadge = sess.model_used ? ` • ${sess.model_used}` : "";
 
       itemEl.innerHTML = `
         <div class="history-item-top">
@@ -380,8 +488,7 @@ window.addEventListener("DOMContentLoaded", () => {
           <button class="history-delete-btn" title="Удалить диалог">✕</button>
         </div>
         <div class="history-meta">
-          <span>${escapeHtml(lastMsg.slice(0, 48))}...</span>
-          <span>${sess.messages.length} сообщ. • ${dateStr}</span>
+          <span>${dateStr}${modelBadge}</span>
         </div>
       `;
 
@@ -390,7 +497,7 @@ window.addEventListener("DOMContentLoaded", () => {
         const target = e.target as HTMLElement;
         if (target.classList.contains("history-delete-btn")) {
           e.stopPropagation();
-          deleteSessionByIndex(idx);
+          await deleteSessionByIndex(idx);
           return;
         }
         await resumeSession(sess);
@@ -406,26 +513,63 @@ window.addEventListener("DOMContentLoaded", () => {
     }
   };
 
-  const resumeSession = async (sess: ChatSession) => {
-    currentSession = sess;
-    renderSessionMessages(currentSession);
-    await showResponseMode();
-    queryInput?.focus();
+  const fetchAndRenderHistory = async () => {
+    try {
+      cachedSessions = await invoke<SessionRecord[]>("get_chat_sessions");
+      renderHistoryUI();
+    } catch (err) {
+      console.error("[AI Helper] Failed to load chat sessions from SQLite:", err);
+    }
   };
 
-  const deleteSessionByIndex = (idx: number) => {
-    const sessions = loadSessions();
-    if (idx >= 0 && idx < sessions.length) {
-      const deletedId = sessions[idx].id;
-      sessions.splice(idx, 1);
-      saveSessions(sessions);
-      if (currentSession.id === deletedId) {
-        currentSession = createNewSession();
+  const resumeSession = async (sessRecord: SessionRecord) => {
+    try {
+      const records = await invoke<MessageRecord[]>("get_chat_messages", {
+        sessionId: sessRecord.id,
+      });
+
+      const loadedMessages: ChatMessage[] = records.map((r) => ({
+        id: r.id,
+        role: r.role as "user" | "assistant",
+        content: r.content,
+        timestamp: new Date(r.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        image: r.image_data,
+      }));
+
+      currentSession = {
+        id: sessRecord.id,
+        title: sessRecord.title,
+        createdAt: sessRecord.created_at,
+        updatedAt: sessRecord.updated_at,
+        messages: loadedMessages,
+        passport: null,
+      };
+
+      renderSessionMessages(currentSession);
+      updateSessionBadge();
+      await showResponseMode();
+      queryInput?.focus();
+    } catch (err) {
+      console.error("[AI Helper] Failed to load session messages from SQLite:", err);
+    }
+  };
+
+  const deleteSessionByIndex = async (idx: number) => {
+    if (idx >= 0 && idx < cachedSessions.length) {
+      const target = cachedSessions[idx];
+      try {
+        await invoke("delete_chat_session", { sessionId: target.id });
+        if (currentSession.id === target.id) {
+          currentSession = createNewSession();
+        }
+        cachedSessions.splice(idx, 1);
+        if (selectedHistoryIndex >= cachedSessions.length) {
+          selectedHistoryIndex = Math.max(0, cachedSessions.length - 1);
+        }
+        renderHistoryUI();
+      } catch (err) {
+        console.error("[AI Helper] Failed to delete session from SQLite:", err);
       }
-      if (selectedHistoryIndex >= sessions.length) {
-        selectedHistoryIndex = Math.max(0, sessions.length - 1);
-      }
-      renderHistory();
     }
   };
 
@@ -442,13 +586,17 @@ window.addEventListener("DOMContentLoaded", () => {
 
   if (capsuleHistoryBtn) capsuleHistoryBtn.addEventListener("click", toggleHistory);
   if (clearHistoryBtn) {
-    clearHistoryBtn.addEventListener("click", () => {
-      saveSessions([]);
-      currentSession = createNewSession();
-      renderHistory();
+    clearHistoryBtn.addEventListener("click", async () => {
+      try {
+        await invoke("clear_chat_history");
+        cachedSessions = [];
+        currentSession = createNewSession();
+        renderHistoryUI();
+      } catch (err) {
+        console.error("[AI Helper] Failed to clear history from SQLite:", err);
+      }
     });
   }
-  if (capsuleNewBtn) capsuleNewBtn.addEventListener("click", startNewSession);
 
   // 7. Middle-click window dragging
   let isDragging = false;
@@ -498,20 +646,47 @@ window.addEventListener("DOMContentLoaded", () => {
   window.addEventListener("pointerup", stopDrag);
   window.addEventListener("pointercancel", stopDrag);
 
-  // 8. Robust Single-Enter Query Submission
+  // 8. Robust Single-Enter Query Submission with Zero-Prompt support
   const submitCurrentQuery = async () => {
-    const query = queryInput?.value.trim() || "";
-    if (!query || isStreaming) return;
+    let query = queryInput?.value.trim() || "";
+    if (isStreaming) return;
+
+    // Zero-Prompt: When Enter is pressed without typing text, synthesize a smart context query
+    if (!query) {
+      if (!currentContent) {
+        try {
+          currentContent = await invoke<CapturedContent | null>("get_last_content");
+        } catch {}
+      }
+
+      if (currentContent && currentContent.type === "Text") {
+        query = "Объясни выделенный фрагмент или исправь ошибку";
+      } else if (currentContent && currentContent.type === "Screenshot") {
+        const prov = getActiveProvider();
+        if (isVisionSupported(prov)) {
+          query = "Что изображено на экране? Кратко объясни суть или подскажи решение";
+        } else {
+          const app = currentPassport?.app_name || currentPassport?.process_name || "окна";
+          query = `Кратко объясни контекст активного приложения ${app}`;
+        }
+      } else if (currentPassport) {
+        query = `Кратко объясни контекст активного приложения ${currentPassport.app_name}`;
+      } else {
+        return;
+      }
+    }
 
     // Clear input bar for next turn
     if (queryInput) queryInput.value = "";
 
     // 1. Add User Message to active session
+    const attachedImage = currentContent && currentContent.type === "Screenshot" ? currentContent.payload.base64 : undefined;
     const userMsg: ChatMessage = {
       id: `msg_${Date.now()}_u`,
       role: "user",
       content: query,
       timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      image: attachedImage,
     };
 
     if (currentSession.messages.length === 0) {
@@ -521,7 +696,32 @@ window.addEventListener("DOMContentLoaded", () => {
 
     currentSession.messages.push(userMsg);
     renderSessionMessages(currentSession);
+    updateSessionBadge();
     await showResponseMode();
+
+    // Persist session header and user message to SQLite
+    const activeProv = getActiveProvider();
+    invoke("save_chat_session", {
+      session: {
+        id: currentSession.id,
+        title: currentSession.title,
+        created_at: currentSession.createdAt,
+        updated_at: Date.now(),
+        model_used: activeProv,
+      },
+    }).catch((err) => console.error("[AI Helper] SQLite user session save error:", err));
+
+    invoke("add_chat_message", {
+      message: {
+        id: userMsg.id,
+        session_id: currentSession.id,
+        role: "user",
+        content: userMsg.content,
+        tokens: 0,
+        created_at: Date.now(),
+        image_data: userMsg.image,
+      },
+    }).catch((err) => console.error("[AI Helper] SQLite user message save error:", err));
 
     // 2. Prepare Live Streaming Bubble for Assistant
     if (statusIndicator) {
@@ -540,10 +740,10 @@ window.addEventListener("DOMContentLoaded", () => {
 
     isStreaming = true;
 
-    // Extract prior dialogue history (mapped to role: user | assistant)
+    // Extract prior dialogue history (mapped to role: user | assistant with images)
     const priorHistory: HistoryMessage[] = currentSession.messages
       .slice(0, -1)
-      .map((m) => ({ role: m.role, content: m.content }));
+      .map((m) => ({ role: m.role, content: m.content, image: m.image }));
 
     // Attach context content (screenshot, crop region, or highlighted text) if freshly captured
     if (!currentContent) {
@@ -571,7 +771,7 @@ window.addEventListener("DOMContentLoaded", () => {
     await streamAIResponse(query, currentPassport, contentPayload, priorHistory, {
       onChunk: (chunk: string) => {
         accumulatedAssistantText += chunk;
-        assistantBubble.textContent = accumulatedAssistantText;
+        assistantBubble.innerHTML = renderMarkdown(accumulatedAssistantText);
         if (responseContent) {
           responseContent.scrollTop = responseContent.scrollHeight;
         }
@@ -605,6 +805,7 @@ window.addEventListener("DOMContentLoaded", () => {
         if (statusIndicator) {
           statusIndicator.textContent = "✓ Завершено";
         }
+        assistantBubble.innerHTML = renderMarkdown(fullText);
         if (tokenCountEl && totalTokens > 0) {
           const pTok = quotaInfo?.promptTokensLastRequest || 0;
           const cTok = quotaInfo?.candidateTokensLastRequest || 0;
@@ -631,16 +832,30 @@ window.addEventListener("DOMContentLoaded", () => {
         };
         currentSession.messages.push(assistantMsg);
         currentSession.updatedAt = Date.now();
+        updateSessionBadge();
 
-        // Upsert into persistent sessions
-        const sessions = loadSessions();
-        const existingIdx = sessions.findIndex((s) => s.id === currentSession.id);
-        if (existingIdx >= 0) {
-          sessions[existingIdx] = currentSession;
-        } else {
-          sessions.unshift(currentSession);
-        }
-        saveSessions(sessions);
+        // Upsert into persistent SQLite storage
+        const usedModel = _modelUsed || getActiveProvider();
+        invoke("save_chat_session", {
+          session: {
+            id: currentSession.id,
+            title: currentSession.title,
+            created_at: currentSession.createdAt,
+            updated_at: currentSession.updatedAt,
+            model_used: usedModel,
+          },
+        }).catch((err) => console.error("[AI Helper] SQLite session update error:", err));
+
+        invoke("add_chat_message", {
+          message: {
+            id: assistantMsg.id,
+            session_id: currentSession.id,
+            role: "assistant",
+            content: fullText,
+            tokens: totalTokens,
+            created_at: currentSession.updatedAt,
+          },
+        }).catch((err) => console.error("[AI Helper] SQLite message insert error:", err));
 
         // Always refocus the query input for smooth subsequent questions without double clicks
         setTimeout(() => queryInput?.focus(), 50);
@@ -718,12 +933,11 @@ window.addEventListener("DOMContentLoaded", () => {
   window.addEventListener("keydown", async (event: KeyboardEvent) => {
     // History Keyboard Navigation (Up / Down / Enter / Delete)
     if (historyPanel && !historyPanel.classList.contains("hidden")) {
-      const sessions = loadSessions();
       if (event.key === "ArrowDown") {
         event.preventDefault();
-        if (selectedHistoryIndex < sessions.length - 1) {
+        if (selectedHistoryIndex < cachedSessions.length - 1) {
           selectedHistoryIndex++;
-          renderHistory();
+          renderHistoryUI();
         }
         return;
       }
@@ -731,20 +945,20 @@ window.addEventListener("DOMContentLoaded", () => {
         event.preventDefault();
         if (selectedHistoryIndex > 0) {
           selectedHistoryIndex--;
-          renderHistory();
+          renderHistoryUI();
         }
         return;
       }
       if (event.key === "Enter") {
         event.preventDefault();
-        if (sessions[selectedHistoryIndex]) {
-          await resumeSession(sessions[selectedHistoryIndex]);
+        if (cachedSessions[selectedHistoryIndex]) {
+          await resumeSession(cachedSessions[selectedHistoryIndex]);
         }
         return;
       }
       if (event.key === "Delete" || event.key === "Backspace") {
         event.preventDefault();
-        deleteSessionByIndex(selectedHistoryIndex);
+        await deleteSessionByIndex(selectedHistoryIndex);
         return;
       }
     }
@@ -766,16 +980,20 @@ window.addEventListener("DOMContentLoaded", () => {
     // Ctrl+[ and Ctrl+]: Quick cycle through sessions
     if ((event.ctrlKey || event.metaKey) && (event.key === "[" || event.key === "]")) {
       event.preventDefault();
-      const sessions = loadSessions();
-      if (sessions.length > 0) {
-        const curIdx = sessions.findIndex((s) => s.id === currentSession.id);
+      if (cachedSessions.length === 0) {
+        try {
+          cachedSessions = await invoke<SessionRecord[]>("get_chat_sessions");
+        } catch {}
+      }
+      if (cachedSessions.length > 0) {
+        const curIdx = cachedSessions.findIndex((s) => s.id === currentSession.id);
         let nextIdx = curIdx;
         if (event.key === "]") {
-          nextIdx = curIdx + 1 >= sessions.length ? 0 : curIdx + 1;
+          nextIdx = curIdx + 1 >= cachedSessions.length ? 0 : curIdx + 1;
         } else {
-          nextIdx = curIdx - 1 < 0 ? sessions.length - 1 : curIdx - 1;
+          nextIdx = curIdx - 1 < 0 ? cachedSessions.length - 1 : curIdx - 1;
         }
-        await resumeSession(sessions[nextIdx]);
+        await resumeSession(cachedSessions[nextIdx]);
       }
       return;
     }
@@ -790,21 +1008,19 @@ window.addEventListener("DOMContentLoaded", () => {
     if (event.key === "Escape") {
       event.preventDefault();
 
-      // 1. If history panel is open -> collapse back to 60px input capsule
-      if (historyPanel && !historyPanel.classList.contains("hidden")) {
+      // 1. If any panel is open or window is expanded -> 1st Escape collapses to 60px capsule
+      const isPanelVisible =
+        (historyPanel && !historyPanel.classList.contains("hidden")) ||
+        (responsePanel && !responsePanel.classList.contains("hidden"));
+
+      if (isExpanded || isPanelVisible) {
         await collapseAll();
         queryInput?.focus();
         return;
       }
 
-      // 2. If response panel is open -> 1st Escape collapses it back to compact capsule
-      if (responsePanel && !responsePanel.classList.contains("hidden")) {
-        await collapseAll();
-        queryInput?.focus();
-        return;
-      }
-
-      // 3. If already collapsed to capsule -> 2nd Escape hides the window
+      // 2. If already collapsed to capsule -> 2nd Escape hides the window
+      await collapseAll();
       appWindow.hide().catch((err) => {
         console.error("[AI Helper] Failed to hide window:", err);
       });
@@ -823,6 +1039,33 @@ window.addEventListener("DOMContentLoaded", () => {
         setTimeout(() => {
           copyBtn.textContent = "Скопировать";
         }, 1500);
+      }
+    });
+  }
+
+  // 10. Code block copy button event delegation
+  if (responseContent) {
+    responseContent.addEventListener("click", async (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      const copyBtnEl = target?.closest(".code-copy-btn") as HTMLButtonElement | null;
+      if (!copyBtnEl) return;
+
+      const container = copyBtnEl.closest(".code-block-container");
+      const codeEl = container?.querySelector("code");
+      if (!codeEl) return;
+
+      const rawCode = codeEl.textContent || "";
+      try {
+        await navigator.clipboard.writeText(rawCode);
+        const originalText = copyBtnEl.textContent;
+        copyBtnEl.textContent = "✓ Скопировано!";
+        copyBtnEl.classList.add("copied");
+        setTimeout(() => {
+          copyBtnEl.textContent = originalText;
+          copyBtnEl.classList.remove("copied");
+        }, 1800);
+      } catch (err) {
+        console.error("[AI Helper] Failed to copy code to clipboard:", err);
       }
     });
   }

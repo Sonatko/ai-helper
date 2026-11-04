@@ -9,7 +9,7 @@ use std::io::Cursor;
 use windows::Win32::Foundation::HGLOBAL;
 #[cfg(windows)]
 use windows::Win32::Graphics::Gdi::{
-    CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDIBits, GetDC,
+    BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDIBits, GetDC,
     ReleaseDC, SelectObject, SetStretchBltMode, StretchBlt, BITMAPINFO, BITMAPINFOHEADER, BI_RGB,
     DIB_RGB_COLORS, HALFTONE, SRCCOPY,
 };
@@ -43,6 +43,8 @@ pub enum CapturedContent {
         base64: String,
         width: u32,
         height: u32,
+        #[serde(default)]
+        is_crop: bool,
     },
     /// Nothing was captured
     Empty,
@@ -169,6 +171,156 @@ pub fn fast_capture_raw_screen(_rect: &WindowRect) -> Option<RawScreenCapture> {
     None
 }
 
+/// Captures the full virtual screen (all monitors or primary) into RAM in 2-3 ms.
+///
+/// Why:
+/// Executed immediately on Alt+F7 to freeze the display state before the snipping overlay appears.
+#[cfg(windows)]
+pub fn fast_capture_fullscreen() -> Option<RawScreenCapture> {
+    unsafe {
+        use windows::Win32::UI::WindowsAndMessaging::{
+            GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
+            SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
+        };
+
+        let mut left = GetSystemMetrics(SM_XVIRTUALSCREEN);
+        let mut top = GetSystemMetrics(SM_YVIRTUALSCREEN);
+        let mut width = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+        let mut height = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+
+        if width <= 0 || height <= 0 {
+            left = 0;
+            top = 0;
+            width = GetSystemMetrics(SM_CXSCREEN);
+            height = GetSystemMetrics(SM_CYSCREEN);
+        }
+
+        let hdc_screen = GetDC(None);
+        if hdc_screen.0.is_null() {
+            return None;
+        }
+
+        let hdc_mem = CreateCompatibleDC(Some(hdc_screen));
+        if hdc_mem.0.is_null() {
+            let _ = ReleaseDC(None, hdc_screen);
+            return None;
+        }
+
+        let hbitmap = CreateCompatibleBitmap(hdc_screen, width, height);
+        if hbitmap.0.is_null() {
+            let _ = DeleteDC(hdc_mem);
+            let _ = ReleaseDC(None, hdc_screen);
+            return None;
+        }
+
+        let old_obj = SelectObject(hdc_mem, hbitmap.into());
+
+        let blt_res = BitBlt(
+            hdc_mem,
+            0,
+            0,
+            width,
+            height,
+            Some(hdc_screen),
+            left,
+            top,
+            SRCCOPY,
+        );
+
+        if blt_res.is_err() {
+            let _ = SelectObject(hdc_mem, old_obj);
+            let _ = DeleteObject(hbitmap.into());
+            let _ = DeleteDC(hdc_mem);
+            let _ = ReleaseDC(None, hdc_screen);
+            return None;
+        }
+
+        let mut bmi = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: width,
+                biHeight: -height,
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let mut raw_pixels = vec![0u8; (width * height * 4) as usize];
+        let lines = GetDIBits(
+            hdc_mem,
+            hbitmap,
+            0,
+            height as u32,
+            Some(raw_pixels.as_mut_ptr() as *mut _),
+            &mut bmi,
+            DIB_RGB_COLORS,
+        );
+
+        let _ = SelectObject(hdc_mem, old_obj);
+        let _ = DeleteObject(hbitmap.into());
+        let _ = DeleteDC(hdc_mem);
+        let _ = ReleaseDC(None, hdc_screen);
+
+        if lines == 0 {
+            return None;
+        }
+
+        Some(RawScreenCapture {
+            bgra_bytes: raw_pixels,
+            width: width as u32,
+            height: height as u32,
+        })
+    }
+}
+
+#[cfg(not(windows))]
+pub fn fast_capture_fullscreen() -> Option<RawScreenCapture> {
+    None
+}
+
+/// Crops a sub-rectangle from a raw BGRA in-memory screen capture in < 0.1 ms.
+pub fn crop_raw_screen(
+    capture: &RawScreenCapture,
+    crop_x: u32,
+    crop_y: u32,
+    crop_w: u32,
+    crop_h: u32,
+) -> Option<RawScreenCapture> {
+    if crop_w == 0 || crop_h == 0 {
+        return None;
+    }
+
+    let src_w = capture.width;
+    let src_h = capture.height;
+
+    if crop_x >= src_w || crop_y >= src_h {
+        return None;
+    }
+
+    let actual_w = crop_w.min(src_w - crop_x);
+    let actual_h = crop_h.min(src_h - crop_y);
+
+    let mut cropped_bgra = Vec::with_capacity((actual_w * actual_h * 4) as usize);
+
+    for row in 0..actual_h {
+        let y = crop_y + row;
+        let start_idx = ((y * src_w + crop_x) * 4) as usize;
+        let end_idx = start_idx + (actual_w * 4) as usize;
+        if end_idx <= capture.bgra_bytes.len() {
+            cropped_bgra.extend_from_slice(&capture.bgra_bytes[start_idx..end_idx]);
+        }
+    }
+
+    Some(RawScreenCapture {
+        bgra_bytes: cropped_bgra,
+        width: actual_w,
+        height: actual_h,
+    })
+}
+
 /// Dispatches an asynchronous Ctrl+Insert copy command without sleeping.
 ///
 /// Returns the clipboard sequence number prior to the command.
@@ -279,7 +431,8 @@ pub fn read_clipboard_text() -> Option<String> {
 /// Converts raw BGRA pixels to compressed JPEG Data URL in RAM.
 pub fn encode_jpeg_base64(raw_bgra: &[u8], width: u32, height: u32) -> Option<String> {
     let mut rgb_pixels = Vec::with_capacity((width * height * 3) as usize);
-    for chunk in raw_bgra.chunks_exact(4) {
+    let (chunks, _) = raw_bgra.as_chunks::<4>();
+    for chunk in chunks {
         rgb_pixels.push(chunk[2]); // R
         rgb_pixels.push(chunk[1]); // G
         rgb_pixels.push(chunk[0]); // B
@@ -302,13 +455,30 @@ pub fn encode_jpeg_base64(raw_bgra: &[u8], width: u32, height: u32) -> Option<St
 ///
 /// Why:
 /// Runs asynchronously while the user sees the window open instantly.
-/// Checks whether selected text was copied; if not, encodes the preserved screen capture to JPEG.
+/// - If `force_screenshot` is true (triggered via Alt+F7): directly encodes and returns the window screenshot.
+/// - If `force_screenshot` is false (triggered via F7): auto-detects highlighted text first; if none, falls back to screenshot.
 pub fn finalize_capture(
     raw_screen: Option<RawScreenCapture>,
     seq_before: u32,
-    force_text: bool,
+    force_screenshot: bool,
 ) -> CapturedContent {
-    // 1. Give target app message queue ~25 ms to complete copy
+    // 1. If user explicitly pressed Alt+F7 (force screenshot), skip text capture entirely!
+    if force_screenshot {
+        if let Some(screen) = raw_screen {
+            if let Some(base64) = encode_jpeg_base64(&screen.bgra_bytes, screen.width, screen.height) {
+                return CapturedContent::Screenshot {
+                    base64,
+                    width: screen.width,
+                    height: screen.height,
+                    is_crop: false,
+                };
+            }
+        }
+        return CapturedContent::Empty;
+    }
+
+    // 2. Standard F7: Auto-detection
+    // Give target app message queue ~25 ms to complete copy
     std::thread::sleep(std::time::Duration::from_millis(25));
 
     #[cfg(windows)]
@@ -321,20 +491,14 @@ pub fn finalize_capture(
         }
     }
 
-    // 2. If force_text (Alt+F7) and clipboard already had text, check clipboard
-    if force_text {
-        if let Some(text) = read_clipboard_text() {
-            return CapturedContent::Text(text);
-        }
-    }
-
-    // 3. Fallback to optimized in-memory screenshot
+    // 3. Fallback to optimized in-memory screenshot if no text was highlighted
     if let Some(screen) = raw_screen {
         if let Some(base64) = encode_jpeg_base64(&screen.bgra_bytes, screen.width, screen.height) {
             return CapturedContent::Screenshot {
                 base64,
                 width: screen.width,
                 height: screen.height,
+                is_crop: false,
             };
         }
     }

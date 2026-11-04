@@ -3,6 +3,9 @@ import {
   recordUsage,
   loadCustomProviders,
   expandQuickCommand,
+  loadWebSearchSettings,
+  getActiveMcpServersPrompt,
+  type WebSearchSettings,
   type ProviderQuotaInfo,
 } from "./settings";
 import type { WindowPassport } from "./main";
@@ -11,6 +14,7 @@ import type { ProviderType } from "./settings";
 export interface HistoryMessage {
   role: "user" | "assistant";
   content: string;
+  image?: string;
 }
 
 export interface StreamCallbacks {
@@ -82,6 +86,176 @@ export function getProviderBadge(): string {
 }
 
 /**
+ * Checks whether the chosen provider and model support image (screenshot) inputs.
+ */
+export function isVisionSupported(provider?: ProviderType, modelName?: string): boolean {
+  const prov = provider || getActiveProvider();
+  if (prov === "gemini_key") return true;
+  if (prov === "openrouter_key") {
+    const m = (modelName || localStorage.getItem("ai_helper_openrouter_model") || "").toLowerCase();
+    return m.includes("vision") || m.includes("vl") || m.includes("flash") || m.includes("4o") || m.includes("claude-3");
+  }
+  if (prov === "auto") {
+    const geminiKey = localStorage.getItem("ai_helper_gemini_api_key");
+    const openRouterKey = localStorage.getItem("ai_helper_openrouter_api_key");
+    return !!(geminiKey || openRouterKey);
+  }
+  return false;
+}
+
+const URL_REGEX = /https?:\/\/[^\s<>"'{}|\\^`\[\]]+/gi;
+
+/**
+ * Extracts and deduplicates HTTP/HTTPS URLs from raw text.
+ */
+export function extractUrls(text: string): string[] {
+  const matches = text.match(URL_REGEX);
+  if (!matches) return [];
+  return Array.from(new Set(matches)).filter((u) => u.startsWith("http://") || u.startsWith("https://"));
+}
+
+/**
+ * Fetches webpage content and converts it to clean Markdown via Jina Reader (or Firecrawl)
+ * with zero browser overhead and an 8-second circuit-breaker timeout.
+ */
+export async function fetchUrlContent(url: string, settings?: WebSearchSettings): Promise<string | null> {
+  const ws = settings || loadWebSearchSettings();
+  if (ws.urlReaderProvider === "off") return null;
+
+  try {
+    const host = ws.urlReaderHost?.trim() || "https://r.jina.ai";
+    const target = `${host.replace(/\/+$/, "")}/${url}`;
+    const headers: Record<string, string> = {
+      Accept: "text/plain",
+      "X-Retain-Images": "none",
+    };
+    if (ws.urlReaderKey?.trim()) {
+      headers["Authorization"] = `Bearer ${ws.urlReaderKey.trim()}`;
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    const res = await fetch(target, {
+      method: "GET",
+      headers,
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+
+    if (!res.ok) {
+      console.warn(`[URL Reader] Failed to fetch ${url} (HTTP ${res.status})`);
+      return null;
+    }
+
+    const text = await res.text();
+    // Return clean markdown, truncated to 12000 chars to respect context limits
+    return text.slice(0, 12000);
+  } catch (err) {
+    console.warn(`[URL Reader] Error fetching ${url}:`, err);
+    return null;
+  }
+}
+
+/**
+ * Performs real-time web search via Jina Search (or Tavily) and returns formatted Markdown.
+ */
+export async function performWebSearch(query: string, settings?: WebSearchSettings): Promise<string | null> {
+  const ws = settings || loadWebSearchSettings();
+  if (ws.searchProvider === "off") return null;
+
+  try {
+    if (ws.searchProvider === "jina_search") {
+      const host = ws.searchHost?.trim() || "https://s.jina.ai";
+      const target = `${host.replace(/\/+$/, "")}/${encodeURIComponent(query)}`;
+      const headers: Record<string, string> = {
+        Accept: "text/plain",
+        "X-Retain-Images": "none",
+      };
+      if (ws.searchKey?.trim()) {
+        headers["Authorization"] = `Bearer ${ws.searchKey.trim()}`;
+      }
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8000);
+      const res = await fetch(target, { method: "GET", headers, signal: controller.signal });
+      clearTimeout(timeout);
+
+      if (!res.ok) return null;
+      const text = await res.text();
+      return text.slice(0, 10000);
+    } else if (ws.searchProvider === "tavily") {
+      const host = ws.searchHost?.trim() || "https://api.tavily.com";
+      const target = `${host.replace(/\/+$/, "")}/search`;
+      if (!ws.searchKey?.trim()) {
+        console.warn("[Web Search] Tavily requires an API key!");
+        return null;
+      }
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8000);
+      const res = await fetch(target, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          api_key: ws.searchKey.trim(),
+          query,
+          max_results: 3,
+        }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+
+      if (!res.ok) return null;
+      const data = await res.json();
+      const results = (data.results || []).map((r: any) => `### [${r.title}](${r.url})\n${r.content}`).join("\n\n");
+      return results.slice(0, 10000);
+    } else if (ws.searchProvider === "brave") {
+      const host = ws.searchHost?.trim() || "https://api.search.brave.com/res/v1/web/search";
+      const target = `${host.replace(/\/+$/, "")}?q=${encodeURIComponent(query)}`;
+      const headers: Record<string, string> = {
+        Accept: "application/json",
+        "X-Subscription-Token": ws.searchKey.trim(),
+      };
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8000);
+      const res = await fetch(target, { method: "GET", headers, signal: controller.signal });
+      clearTimeout(timeout);
+      if (!res.ok) return null;
+      const data = await res.json();
+      const webResults = (data.web?.results || []).map((r: any) => `### [${r.title}](${r.url})\n${r.description}`).join("\n\n");
+      return webResults.slice(0, 10000);
+    } else if (ws.searchProvider === "custom") {
+      const host = ws.searchHost?.trim() || "http://localhost:8080";
+      const sep = host.includes("?") ? "&" : "?";
+      const target = `${host}${sep}q=${encodeURIComponent(query)}&format=json`;
+      const headers: Record<string, string> = {
+        Accept: "application/json, text/plain",
+      };
+      if (ws.searchKey?.trim()) {
+        headers["Authorization"] = `Bearer ${ws.searchKey.trim()}`;
+      }
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8000);
+      const res = await fetch(target, { method: "GET", headers, signal: controller.signal });
+      clearTimeout(timeout);
+      if (!res.ok) return null;
+      const text = await res.text();
+      try {
+        const data = JSON.parse(text);
+        if (data.results && Array.isArray(data.results)) {
+          return data.results.slice(0, 5).map((r: any) => `### [${r.title}](${r.url})\n${r.content || ""}`).join("\n\n");
+        }
+      } catch {}
+      return text.slice(0, 10000);
+    }
+    return null;
+  } catch (err) {
+    console.warn(`[Web Search] Error searching for ${query}:`, err);
+    return null;
+  }
+}
+
+/**
  * Dispatches the AI request to the active provider with multi-turn conversation history.
  */
 export async function streamAIResponse(
@@ -91,29 +265,95 @@ export async function streamAIResponse(
   history: HistoryMessage[] = [],
   callbacks: StreamCallbacks
 ): Promise<void> {
-  const effectiveQuery = expandQuickCommand(userQuery, content?.text, passport?.window_title);
+  let effectiveQuery = expandQuickCommand(userQuery, content?.text, passport?.window_title);
   const provider = getActiveProvider();
+  const webSettings = loadWebSearchSettings();
+
+  // 1. URL Reader (Cherry Studio Architecture):
+  // If query or selection contains URLs, fetch them via Jina Reader/Firecrawl
+  if (webSettings.urlReaderProvider !== "off") {
+    const rawCombinedText = `${userQuery} ${content?.text || ""}`;
+    const detectedUrls = extractUrls(rawCombinedText);
+    if (detectedUrls.length > 0) {
+      const urlsToFetch = detectedUrls.slice(0, 2);
+      for (const targetUrl of urlsToFetch) {
+        const fetchedMarkdown = await fetchUrlContent(targetUrl, webSettings);
+        if (fetchedMarkdown) {
+          effectiveQuery += `\n\n[Web page content from ${targetUrl}]:\n${fetchedMarkdown}`;
+        }
+      }
+    }
+  }
+
+  // 2. Web Search Fallback for non-Gemini / non-grounded providers:
+  // If user explicitly asks to search or runs /web, and model is NOT using native tools:
+  const isExplicitSearch =
+    userQuery.toLowerCase().startsWith("/web") ||
+    userQuery.toLowerCase().startsWith("/search") ||
+    userQuery.toLowerCase().includes("поищи в интернете") ||
+    userQuery.toLowerCase().includes("найди в интернете");
+
+  const willUseModelNativeGrounding =
+    webSettings.preferModelTools &&
+    (provider === "gemini_key" || (provider === "auto" && !content?.jpegBase64));
+
+  if (isExplicitSearch && !willUseModelNativeGrounding && webSettings.searchProvider !== "off") {
+    const cleanSearchQuery =
+      userQuery.replace(/^\/(?:web|search)\s*/i, "").trim() || content?.text || userQuery;
+    const searchResults = await performWebSearch(cleanSearchQuery, webSettings);
+    if (searchResults) {
+      effectiveQuery += `\n\n[Web Search Results for "${cleanSearchQuery}"]:\n${searchResults}`;
+    }
+  }
+
+  // 3. MCP Tools Awareness (Active across ALL AI models):
+  const mcpPrompt = getActiveMcpServersPrompt();
+  if (mcpPrompt) {
+    effectiveQuery += mcpPrompt;
+  }
+
+  // Transparently notify user if a screenshot was taken but the model cannot process vision
+  let effectiveCallbacks = callbacks;
+  if (content?.mode === "screenshot" && !isVisionSupported(provider)) {
+    const notice = "📷 *[Model does not support screenshots]*\n\n";
+    let noticeSent = false;
+    effectiveCallbacks = {
+      ...callbacks,
+      onChunk: (chunk: string) => {
+        if (!noticeSent) {
+          noticeSent = true;
+          callbacks.onChunk(notice + chunk);
+        } else {
+          callbacks.onChunk(chunk);
+        }
+      },
+      onFinish: (fullText: string, totalTokens: number, modelUsed?: string, quotaInfo?: ProviderQuotaInfo) => {
+        const finalPayload = noticeSent ? `${notice}${fullText}` : fullText;
+        callbacks.onFinish(finalPayload, totalTokens, modelUsed, quotaInfo);
+      },
+    };
+  }
 
   if (provider.startsWith("custom_")) {
-    await streamCustomProvider(provider, effectiveQuery, passport, content, history, callbacks);
+    await streamCustomProvider(provider, effectiveQuery, passport, content, history, effectiveCallbacks);
     return;
   }
 
   switch (provider) {
     case "auto":
-      await streamAutoWithFailover(effectiveQuery, passport, content, history, callbacks);
+      await streamAutoWithFailover(effectiveQuery, passport, content, history, effectiveCallbacks);
       break;
     case "gemini_key":
-      await streamGemini(effectiveQuery, passport, content, history, callbacks);
+      await streamGemini(effectiveQuery, passport, content, history, effectiveCallbacks);
       break;
     case "groq_key":
-      await streamGroq(effectiveQuery, passport, content, history, callbacks);
+      await streamGroq(effectiveQuery, passport, content, history, effectiveCallbacks);
       break;
     case "openrouter_key":
-      await streamOpenRouter(effectiveQuery, passport, content, history, callbacks);
+      await streamOpenRouter(effectiveQuery, passport, content, history, effectiveCallbacks);
       break;
     default:
-      await streamPublicPool(effectiveQuery, passport, content, history, callbacks);
+      await streamPublicPool(effectiveQuery, passport, content, history, effectiveCallbacks);
       break;
   }
 }
@@ -121,16 +361,43 @@ export async function streamAIResponse(
 /**
  * Common system prompt constructor incorporating the Context Passport.
  */
-function buildSystemInstruction(passport: WindowPassport | null): string {
-  const basePrompt = localStorage.getItem("ai_helper_system_prompt") || DEFAULT_SYSTEM_PROMPT;
-  if (!passport) return basePrompt;
-  return (
-    `${basePrompt}\n\n` +
-    `[ACTIVE WINDOW ENVIRONMENT]\n` +
-    `- Process: ${passport.process_name} (${passport.app_name})\n` +
-    `- Window Title: "${passport.window_title}"\n` +
-    `- Subsystem: ${passport.is_wsl ? "WSL2 (Linux Ubuntu/Debian)" : passport.is_ssh ? "Remote SSH Session" : "Windows Native Win32"}`
-  );
+/**
+ * Static system prompt prefix that NEVER changes between requests within a session.
+ * Crucial for triggering Prompt Caching (KV-Cache reuse) on Gemini, Claude, DeepSeek, and OpenAI.
+ */
+export function getStaticSystemPrompt(): string {
+  return localStorage.getItem("ai_helper_system_prompt") || DEFAULT_SYSTEM_PROMPT;
+}
+
+/**
+ * Builds the current active user turn payload, prepending the dynamic context passport
+ * (process name, window title, environment) and any highlighted text.
+ *
+ * Placing dynamic context strictly in the final user turn ensures the entire preceding
+ * prefix (system prompt + past dialogue turns) remains 100% byte-identical for GPU cache hits!
+ */
+export function buildActiveUserMessage(
+  userQuery: string,
+  passport: WindowPassport | null,
+  content: CapturedContentPayload | null
+): string {
+  const parts: string[] = [];
+
+  if (passport) {
+    const env = passport.is_wsl
+      ? "WSL2 Linux"
+      : passport.is_ssh
+      ? "SSH Remote"
+      : "Windows Native";
+    parts.push(`[Active Window Context: ${passport.app_name} (${passport.process_name}) | ${env} | "${passport.window_title}"]`);
+  }
+
+  if (content?.mode === "text" && content.text) {
+    parts.push(`[Highlighted Text / Code]:\n${content.text}`);
+  }
+
+  parts.push(userQuery);
+  return parts.join("\n\n");
 }
 
 /**
@@ -273,16 +540,24 @@ async function streamPublicPool(
   callbacks: StreamCallbacks,
   isAuto = false
 ): Promise<void> {
-  const systemText = buildSystemInstruction(passport);
-  let userText = userQuery;
-  if (content?.mode === "text" && content.text) {
-    userText = `[Выделенный код / ошибка]:\n${content.text}\n\n[Вопрос]: ${userQuery}`;
-  }
+  const systemText = getStaticSystemPrompt();
+  const userText = buildActiveUserMessage(userQuery, passport, content);
 
-  const priorMessages = history.slice(-8).map((m) => ({
-    role: m.role,
-    content: m.content,
-  }));
+  const priorMessages = history.slice(-16).map((m) => {
+    if (m.image) {
+      return {
+        role: m.role,
+        content: [
+          { type: "text", text: m.content },
+          { type: "image_url", image_url: { url: m.image } },
+        ],
+      };
+    }
+    return {
+      role: m.role,
+      content: m.content,
+    };
+  });
 
   const endpoint = "https://text.pollinations.ai/openai/chat/completions";
   const modelName = "openai-fast";
@@ -318,16 +593,24 @@ async function streamGroq(
   }
 
   const model = localStorage.getItem("ai_helper_groq_model") || "llama-3.3-70b-versatile";
-  const systemText = buildSystemInstruction(passport);
-  let userText = userQuery;
-  if (content?.mode === "text" && content.text) {
-    userText = `[Выделенный код]:\n${content.text}\n\n[Вопрос]: ${userQuery}`;
-  }
+  const systemText = getStaticSystemPrompt();
+  const userText = buildActiveUserMessage(userQuery, passport, content);
 
-  const priorMessages = history.slice(-8).map((m) => ({
-    role: m.role,
-    content: m.content,
-  }));
+  const priorMessages = history.slice(-16).map((m) => {
+    if (m.image) {
+      return {
+        role: m.role,
+        content: [
+          { type: "text", text: m.content },
+          { type: "image_url", image_url: { url: m.image } },
+        ],
+      };
+    }
+    return {
+      role: m.role,
+      content: m.content,
+    };
+  });
 
   const endpoint = "https://api.groq.com/openai/v1/chat/completions";
   const body = {
@@ -365,20 +648,32 @@ async function streamOpenRouter(
   }
 
   const model = localStorage.getItem("ai_helper_openrouter_model") || "openrouter/free";
-  const systemText = buildSystemInstruction(passport);
+  const systemText = getStaticSystemPrompt();
 
-  const priorMessages = history.slice(-8).map((m) => ({
-    role: m.role,
-    content: m.content,
-  }));
+  const priorMessages = history.slice(-16).map((m) => {
+    if (m.image) {
+      return {
+        role: m.role,
+        content: [
+          { type: "text", text: m.content },
+          { type: "image_url", image_url: { url: m.image } },
+        ],
+      };
+    }
+    return {
+      role: m.role,
+      content: m.content,
+    };
+  });
 
   const messages: any[] = [{ role: "system", content: systemText }, ...priorMessages];
 
   if (content?.mode === "screenshot" && content.jpegBase64) {
+    const activeText = buildActiveUserMessage(userQuery, passport, null);
     messages.push({
       role: "user",
       content: [
-        { type: "text", text: userQuery },
+        { type: "text", text: activeText },
         {
           type: "image_url",
           image_url: {
@@ -387,15 +682,10 @@ async function streamOpenRouter(
         },
       ],
     });
-  } else if (content?.mode === "text" && content.text) {
-    messages.push({
-      role: "user",
-      content: `[Выделенный фрагмент]:\n${content.text}\n\n[Вопрос]: ${userQuery}`,
-    });
   } else {
     messages.push({
       role: "user",
-      content: userQuery,
+      content: buildActiveUserMessage(userQuery, passport, content),
     });
   }
 
@@ -445,21 +735,33 @@ async function streamGemini(
   }
 
   const model = localStorage.getItem("ai_helper_gemini_model") || "gemini-2.0-flash";
-  const systemInstructionText = buildSystemInstruction(passport);
+  const systemInstructionText = getStaticSystemPrompt();
 
-  const priorContents = history.slice(-8).map((m) => ({
-    role: m.role === "assistant" ? "model" : "user",
-    parts: [{ text: m.content }],
-  }));
+  const priorContents = history.slice(-16).map((m) => {
+    const parts: any[] = [];
+    if (m.image) {
+      const cleanBase64 = m.image.replace(/^data:image\/[a-z]+;base64,/, "");
+      parts.push({
+        inlineData: {
+          mimeType: "image/jpeg",
+          data: cleanBase64,
+        },
+      });
+    }
+    parts.push({ text: m.content });
+    return {
+      role: m.role === "assistant" ? "model" : "user",
+      parts,
+    };
+  });
 
-  const currentParts: any[] = [];
-  if (content?.mode === "text" && content.text) {
-    currentParts.push({
-      text: `[Выделенный фрагмент кода / ошибки]:\n${content.text}\n\n[Вопрос пользователя]: ${userQuery}`,
-    });
-  } else {
-    currentParts.push({ text: userQuery });
-  }
+  const activeText = buildActiveUserMessage(
+    userQuery,
+    passport,
+    content?.mode === "text" ? content : null
+  );
+
+  const currentParts: any[] = [{ text: activeText }];
 
   if (content?.mode === "screenshot" && content.jpegBase64) {
     currentParts.push({
@@ -480,14 +782,22 @@ async function streamGemini(
 
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:streamGenerateContent?key=${encodeURIComponent(apiKey)}&alt=sse`;
 
+  const webSettings = loadWebSearchSettings();
+  const requestPayload: any = {
+    systemInstruction: { parts: [{ text: systemInstructionText }] },
+    contents,
+  };
+
+  // Google Search Grounding: if enabled and search provider is not turned off
+  if (webSettings.preferModelTools && webSettings.searchProvider !== "off") {
+    requestPayload.tools = [{ googleSearch: {} }];
+  }
+
   try {
     const response = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: systemInstructionText }] },
-        contents,
-      }),
+      body: JSON.stringify(requestPayload),
     });
 
     if (!response.ok) {
@@ -586,17 +896,24 @@ async function streamCustomLocal(
 ): Promise<void> {
   const baseUrl = (localStorage.getItem("ai_helper_local_url") || "http://localhost:11434/v1").replace(/\/+$/, "");
   const model = localStorage.getItem("ai_helper_local_model") || "llama3";
-  const systemText = buildSystemInstruction(passport);
+  const systemText = getStaticSystemPrompt();
+  const userText = buildActiveUserMessage(userQuery, passport, content);
 
-  let userText = userQuery;
-  if (content?.mode === "text" && content.text) {
-    userText = `[Выделенный фрагмент]:\n${content.text}\n\n[Вопрос]: ${userQuery}`;
-  }
-
-  const priorMessages = history.slice(-8).map((m) => ({
-    role: m.role,
-    content: m.content,
-  }));
+  const priorMessages = history.slice(-16).map((m) => {
+    if (m.image) {
+      return {
+        role: m.role,
+        content: [
+          { type: "text", text: m.content },
+          { type: "image_url", image_url: { url: m.image } },
+        ],
+      };
+    }
+    return {
+      role: m.role,
+      content: m.content,
+    };
+  });
 
   const endpoint = `${baseUrl}/chat/completions`;
   const body = {
@@ -635,17 +952,24 @@ async function streamCustomProvider(
 
   const baseUrl = cp.baseUrl.replace(/\/+$/, "");
   const model = localStorage.getItem(`ai_helper_model_${providerId}`) || "default";
-  const systemText = buildSystemInstruction(passport);
+  const systemText = getStaticSystemPrompt();
+  const userText = buildActiveUserMessage(userQuery, passport, content);
 
-  let userText = userQuery;
-  if (content?.mode === "text" && content.text) {
-    userText = `[Выделенный фрагмент]:\n${content.text}\n\n[Вопрос]: ${userQuery}`;
-  }
-
-  const priorMessages = history.slice(-8).map((m) => ({
-    role: m.role,
-    content: m.content,
-  }));
+  const priorMessages = history.slice(-16).map((m) => {
+    if (m.image) {
+      return {
+        role: m.role,
+        content: [
+          { type: "text", text: m.content },
+          { type: "image_url", image_url: { url: m.image } },
+        ],
+      };
+    }
+    return {
+      role: m.role,
+      content: m.content,
+    };
+  });
 
   const endpoint = `${baseUrl}/chat/completions`;
   const body = {

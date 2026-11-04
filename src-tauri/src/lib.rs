@@ -1,4 +1,6 @@
+
 pub mod commands;
+pub mod storage;
 pub mod system;
 
 use std::sync::Mutex;
@@ -15,6 +17,7 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 pub struct AppState {
     pub last_passport: Mutex<Option<system::passport::WindowPassport>>,
     pub last_content: Mutex<Option<system::content::CapturedContent>>,
+    pub last_screen_freeze: Mutex<Option<system::content::RawScreenCapture>>,
 }
 
 /// The core library entry point for the AI Helper desktop application.
@@ -29,6 +32,7 @@ pub fn run() {
         .manage(AppState {
             last_passport: Mutex::new(None),
             last_content: Mutex::new(None),
+            last_screen_freeze: Mutex::new(None),
         })
         // Register IPC commands callable from frontend
         .invoke_handler(tauri::generate_handler![
@@ -39,86 +43,146 @@ pub fn run() {
             commands::window::collapse_window,
             commands::window::open_settings_window,
             commands::window::close_settings_window,
+            commands::window::open_external_url,
+            commands::window::confirm_crop_region,
+            commands::window::cancel_crop_region,
+            commands::chat::get_chat_sessions,
+            commands::chat::save_chat_session,
+            commands::chat::get_chat_messages,
+            commands::chat::add_chat_message,
+            commands::chat::delete_chat_session,
+            commands::chat::clear_chat_history,
         ])
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+                let _ = window.emit("app_summoned", ());
+            }
+        }))
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
                     if event.state == ShortcutState::Pressed {
-                        if let Some(window) = app.get_webview_window("main") {
-                            let is_visible = window.is_visible().unwrap_or(false);
-                            if is_visible {
-                                let _ = window.hide();
-                            } else {
-                                let shortcut_str = format!("{:?}", shortcut).to_lowercase();
-                                let is_alt = shortcut_str.contains("alt");
+                        let shortcut_str = format!("{:?}", shortcut).to_lowercase();
+                        let is_alt_key_held = {
+                            #[cfg(windows)]
+                            unsafe {
+                                use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_MENU};
+                                (GetAsyncKeyState(VK_MENU.0 as i32) as u16 & 0x8000) != 0
+                            }
+                            #[cfg(not(windows))]
+                            false
+                        };
+                        let is_alt = is_alt_key_held || shortcut_str.contains("alt");
 
-                                // 1. Instant capture of context passport (< 0.2 ms) while target app holds OS focus
-                                let passport = system::passport::capture_active_window_passport();
+                        if is_alt {
+                            // ========================================================
+                            // SCENARIO 3: INTERACTIVE SCREEN REGION SNIP (Alt + F7)
+                            // ========================================================
+                            // 1. Instant capture of context passport while target app holds OS focus
+                            let passport = system::passport::capture_active_window_passport();
 
-                                // 2. Ultra-fast non-blocking preparation (< 2 ms):
-                                // Dispatches Ctrl+Insert (if text selected) and grabs hardware downscaled GDI pixels
-                                let seq_before = system::content::dispatch_safe_copy();
-                                let raw_screen = if let Some(ref p) = passport {
-                                    system::content::fast_capture_raw_screen(&p.rect)
-                                } else {
-                                    None
-                                };
+                            // 2. Freeze full desktop in RAM (< 3 ms) BEFORE overlay is shown
+                            let freeze = system::content::fast_capture_fullscreen();
 
-                                // 3. Reveal assistant window IMMEDIATELY (< 3 ms)!
-                                // ZERO UI LAG: the search capsule appears in under 5 ms from physical key press!
-                                let _ = window.unminimize();
-                                let _ = window.show();
-                                let _ = window.set_focus();
-
-                                // 4. Save initial passport into AppState
-                                if let Some(state) = app.try_state::<AppState>() {
-                                    if let Ok(mut last_p) = state.last_passport.lock() {
-                                        *last_p = passport.clone();
-                                    }
+                            if let Some(state) = app.try_state::<AppState>() {
+                                if let Ok(mut last_p) = state.last_passport.lock() {
+                                    *last_p = passport;
                                 }
+                                if let Ok(mut last_f) = state.last_screen_freeze.lock() {
+                                    *last_f = freeze;
+                                }
+                            }
 
-                                // 5. Finalize context capture asynchronously in a background thread (0% UI freeze)
-                                let app_handle = app.clone();
-                                std::thread::spawn(move || {
-                                    let content = system::content::finalize_capture(raw_screen, seq_before, is_alt);
+                            // 3. Reveal and focus interactive snipping overlay
+                            if let Some(snip_win) = app.get_webview_window("snipping") {
+                                let _ = snip_win.show();
+                                let _ = snip_win.unminimize();
+                                commands::window::force_focus_window(&snip_win);
+                                let _ = snip_win.set_focus();
+                                let _ = snip_win.emit("snipping_activated", ());
+                            }
+                        } else {
+                            // ========================================================
+                            // SCENARIO 1 & 2: MAIN CAPSULE SEARCH (F7)
+                            // ========================================================
+                            if let Some(window) = app.get_webview_window("main") {
+                                let is_visible = window.is_visible().unwrap_or(false);
+                                let is_foreground = commands::window::is_window_foreground(&window);
 
-                                    // Diagnostic reporting to terminal
-                                    if let Some(ref p) = passport {
-                                        println!(
-                                            "[AI Helper Passport] App: '{}' ({}) | Title: '{}' | Bounds: {}x{} | DPI: {}",
-                                            p.app_name, p.process_name, p.window_title, p.rect.width, p.rect.height, p.dpi
-                                        );
+                                if is_visible && is_foreground {
+                                    let _ = window.hide();
+                                } else {
+                                    // 1. Instant capture of context passport (< 0.2 ms)
+                                    let passport = system::passport::capture_active_window_passport();
+
+                                    // 2. Dispatch Ctrl+Insert and capture hardware screen
+                                    let seq_before = system::content::dispatch_safe_copy();
+                                    let raw_screen = if let Some(ref p) = passport {
+                                        system::content::fast_capture_raw_screen(&p.rect)
+                                    } else {
+                                        None
+                                    };
+
+                                    // 3. Reveal assistant window immediately (< 3 ms)
+                                    let _ = window.unminimize();
+                                    let _ = window.show();
+                                    commands::window::force_focus_window(&window);
+                                    let _ = window.set_focus();
+                                    let _ = window.emit("app_summoned", ());
+
+                                    // 4. Save initial passport into AppState
+                                    if let Some(state) = app.try_state::<AppState>() {
+                                        if let Ok(mut last_p) = state.last_passport.lock() {
+                                            *last_p = passport.clone();
+                                        }
                                     }
 
-                                    match &content {
-                                        system::content::CapturedContent::Text(text) => {
-                                            let preview: String = text.chars().take(60).collect();
+                                    // 5. Finalize context capture asynchronously in a background thread (0% UI freeze)
+                                    let app_handle = app.clone();
+                                    std::thread::spawn(move || {
+                                        let content = system::content::finalize_capture(raw_screen, seq_before, false);
+
+                                        // Diagnostic reporting to terminal
+                                        if let Some(ref p) = passport {
                                             println!(
-                                                "[AI Helper Content] Mode: Highlighted Text ({} chars) -> \"{}\"",
-                                                text.len(),
-                                                preview
+                                                "[AI Helper Passport] App: '{}' ({}) | Title: '{}' | Bounds: {}x{} | DPI: {}",
+                                                p.app_name, p.process_name, p.window_title, p.rect.width, p.rect.height, p.dpi
                                             );
                                         }
-                                        system::content::CapturedContent::Screenshot { width, height, .. } => {
-                                            println!(
-                                                "[AI Helper Content] Mode: Fast BitBlt Screenshot ({}x{} px, in-memory JPEG)",
-                                                width, height
-                                            );
-                                        }
-                                        system::content::CapturedContent::Empty => {
-                                            println!("[AI Helper Content] Mode: Empty Content");
-                                        }
-                                    }
 
-                                    if let Some(state) = app_handle.try_state::<AppState>() {
-                                        if let Ok(mut last_c) = state.last_content.lock() {
-                                            *last_c = Some(content);
+                                        match &content {
+                                            system::content::CapturedContent::Text(text) => {
+                                                let preview: String = text.chars().take(60).collect();
+                                                println!(
+                                                    "[AI Helper Content] Mode: Highlighted Text ({} chars) -> \"{}\"",
+                                                    text.len(),
+                                                    preview
+                                                );
+                                            }
+                                            system::content::CapturedContent::Screenshot { width, height, .. } => {
+                                                println!(
+                                                    "[AI Helper Content] Mode: Fast BitBlt Screenshot ({}x{} px, in-memory JPEG)",
+                                                    width, height
+                                                );
+                                            }
+                                            system::content::CapturedContent::Empty => {
+                                                println!("[AI Helper Content] Mode: Empty Content");
+                                            }
                                         }
-                                    }
 
-                                    // Notify frontend to refresh its badge seamlessly
-                                    let _ = app_handle.emit("context_content_ready", ());
-                                });
+                                        if let Some(state) = app_handle.try_state::<AppState>() {
+                                            if let Ok(mut last_c) = state.last_content.lock() {
+                                                *last_c = Some(content);
+                                            }
+                                        }
+
+                                        // Notify frontend to refresh its badge seamlessly
+                                        let _ = app_handle.emit("context_content_ready", ());
+                                    });
+                                }
                             }
                         }
                     }
@@ -136,6 +200,18 @@ pub fn run() {
             }
         })
         .setup(|app| {
+            // Initialize SQLite chats database in OS-specific AppData folder
+            let app_data_dir = app
+                .path()
+                .app_data_dir()
+                .unwrap_or_else(|_| std::path::PathBuf::from("."));
+            let _ = std::fs::create_dir_all(&app_data_dir);
+            let db_path = app_data_dir.join("chats.db");
+
+            let db_manager = storage::DatabaseManager::new(&db_path)
+                .expect("Failed to initialize SQLite database");
+            app.manage(db_manager);
+
             // Retrieve the primary webview window by its label
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
@@ -150,15 +226,22 @@ pub fn run() {
                 true,
                 None::<&str>,
             )?;
+            let snip_item = MenuItem::with_id(
+                app,
+                "snip",
+                "✂️ Вырезать область (Alt+F7)",
+                true,
+                None::<&str>,
+            )?;
             let settings_item =
                 MenuItem::with_id(app, "settings", "⚙️ Настройки...", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "🚪 Выход", true, None::<&str>)?;
-            let tray_menu = Menu::with_items(app, &[&toggle_item, &settings_item, &quit_item])?;
+            let tray_menu = Menu::with_items(app, &[&toggle_item, &snip_item, &settings_item, &quit_item])?;
 
             let mut tray_builder = TrayIconBuilder::new()
                 .menu(&tray_menu)
                 .show_menu_on_left_click(false)
-                .tooltip("AI Helper — Нажмите F7 для вызова")
+                .tooltip("AI Helper — F7 (Ассистент) / Alt+F7 (Вырезать область)")
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "toggle" => {
                         if let Some(window) = app.get_webview_window("main") {
@@ -170,6 +253,25 @@ pub fn run() {
                                 let _ = window.unminimize();
                                 let _ = window.set_focus();
                             }
+                        }
+                    }
+                    "snip" => {
+                        let passport = system::passport::capture_active_window_passport();
+                        let freeze = system::content::fast_capture_fullscreen();
+                        if let Some(state) = app.try_state::<AppState>() {
+                            if let Ok(mut last_p) = state.last_passport.lock() {
+                                *last_p = passport;
+                            }
+                            if let Ok(mut last_f) = state.last_screen_freeze.lock() {
+                                *last_f = freeze;
+                            }
+                        }
+                        if let Some(snip_win) = app.get_webview_window("snipping") {
+                            let _ = snip_win.show();
+                            let _ = snip_win.unminimize();
+                            commands::window::force_focus_window(&snip_win);
+                            let _ = snip_win.set_focus();
+                            let _ = snip_win.emit("snipping_activated", ());
                         }
                     }
                     "settings" => {

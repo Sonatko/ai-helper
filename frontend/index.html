@@ -20,8 +20,16 @@
           spellcheck="false"
         />
         <div class="capsule-actions">
-          <div id="badge-pill" class="badge-pill hidden"></div>
-          <button id="capsule-new-btn" class="capsule-btn" title="Новый запрос (Ctrl+N)">+ Новый</button>
+          <div id="badge-pill" class="badge-pill hidden">
+            <span id="badge-pill-text"></span>
+            <div id="badge-preview-popup" class="badge-preview-popup hidden">
+              <img id="badge-preview-img" src="" alt="Preview" />
+            </div>
+          </div>
+          <div id="thread-pill" class="thread-pill hidden" title="Активный диалог (Ctrl+N — начать новый)">
+            <span id="thread-text">💬 Ветка</span>
+            <span id="thread-reset-btn" class="thread-reset" title="Начать чистый диалог (Ctrl+N)">✕</span>
+          </div>
           <button id="capsule-history-btn" class="capsule-circle-btn" title="История запросов (Ctrl+H)">🕒</button>
         </div>
       </header>

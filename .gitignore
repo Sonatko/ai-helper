@@ -14,7 +14,18 @@ scratch
 # Environment and Secrets
 .env
 .env.*
+*.env
+**/.env
+**/.env.*
 !.env.example
+
+# Databases & Local state
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+media/
 
 # IDE & OS
 .vscode/*

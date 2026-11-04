@@ -29,13 +29,25 @@
         "title": "AI Settings",
         "label": "settings",
         "url": "settings.html",
-        "width": 500,
-        "height": 420,
+        "width": 550,
+        "height": 480,
         "resizable": true,
         "center": true,
         "visible": false,
         "decorations": true,
         "alwaysOnTop": true
+      },
+      {
+        "title": "Snipping Overlay",
+        "label": "snipping",
+        "url": "snipping.html",
+        "fullscreen": true,
+        "resizable": false,
+        "visible": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true
       }
     ],
     "security": {

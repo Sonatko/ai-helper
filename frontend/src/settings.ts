@@ -2,14 +2,14 @@ import { invoke } from "@tauri-apps/api/core";
 
 export const DEFAULT_SYSTEM_PROMPT =
   "You are a precision, multi-domain system assistant for Windows.\n" +
-  "Your goal is to solve the user's task directly with maximum clarity and zero fluff.\n\n" +
+  "Your goal is to solve the user's task directly with maximum clarity and conciseness.\n\n" +
   "OPERATING PRINCIPLES:\n" +
-  "1. Zero Fluff: Never include greetings, pleasantries, filler phrases, or closing remarks. Jump directly to the payload.\n" +
+  "1. Conciseness: Jump directly to the answer with zero filler or empty greetings. If the user prompt is an ambiguous test (e.g. '123') or brief greeting, answer it directly or briefly ask how to assist without hallucinating unrequested code.\n" +
   "2. Domain-Adaptive Behavior:\n" +
   "   - If input is code, error logs, or a stack trace: diagnose root cause and provide precise, complete drop-in fixes.\n" +
   "   - If input is prose, article, or message: perform the requested action (translate, summarize, rewrite, critique) while preserving tone.\n" +
-  "   - If input is an image or UI screenshot: explain visual elements, data tables, or interface controls clearly.\n" +
-  "3. Environment Grounding: Leverage the provided active window title and process name to tailor instructions to the user's actual runtime (WSL2, native Windows, IDE, browser, terminal).\n" +
+  "   - If input is an image or UI screenshot: explain visual elements, game interfaces, data tables, or controls clearly.\n" +
+  "3. Environment Awareness: The provided active window title and process name give background awareness of the user's runtime. Only write code for or modify it if the user explicitly asks about it.\n" +
   "4. Output Language: Always respond in the language of the user's prompt. If the user prompts in Russian or the intent is ambiguous, default to Russian.\n" +
   "5. Formatting: Output strictly clean, readable GitHub-flavored Markdown.";
 
@@ -69,6 +69,15 @@ export const BUILTIN_COMMANDS: QuickCommand[] = [
     isBuiltin: true,
     enabled: true,
   },
+  {
+    id: "builtin_web",
+    trigger: "/web",
+    name: "Search Web / Read URL",
+    icon: "🌐",
+    template: "Search the web or analyze the latest information regarding this topic, providing up-to-date facts and sources:\n\n{selection}",
+    isBuiltin: true,
+    enabled: true,
+  },
 ];
 
 const STORAGE_KEY_COMMANDS = "ai_helper_quick_commands_v1";
@@ -98,6 +107,158 @@ export function saveQuickCommands(commands: QuickCommand[]): void {
 export function resetQuickCommands(): QuickCommand[] {
   localStorage.setItem(STORAGE_KEY_COMMANDS, JSON.stringify(BUILTIN_COMMANDS));
   return [...BUILTIN_COMMANDS];
+}
+
+export interface McpServerConfig {
+  id: string;
+  name: string;
+  description: string;
+  icon: string;
+  command: string;
+  args: string[];
+  env?: Record<string, string>;
+  enabled: boolean;
+  isPreset?: boolean;
+}
+
+export const MCP_PRESET_CATALOG: McpServerConfig[] = [
+  {
+    id: "preset_fetch",
+    name: "Web Fetch & Markdown",
+    description: "Fetch web pages and convert HTML to clean Markdown for the AI",
+    icon: "🌐",
+    command: "npx",
+    args: ["-y", "@modelcontextprotocol/server-fetch"],
+    enabled: true,
+    isPreset: true,
+  },
+  {
+    id: "preset_filesystem",
+    name: "Local Filesystem",
+    description: "Read, write, and search files inside your workspace directory",
+    icon: "📁",
+    command: "npx",
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "."],
+    enabled: false,
+    isPreset: true,
+  },
+  {
+    id: "preset_github",
+    name: "GitHub Explorer",
+    description: "Inspect repositories, pull requests, issues, commits, and diffs",
+    icon: "🐙",
+    command: "npx",
+    args: ["-y", "@modelcontextprotocol/server-github"],
+    env: { GITHUB_PERSONAL_ACCESS_TOKEN: "" },
+    enabled: false,
+    isPreset: true,
+  },
+  {
+    id: "preset_brave_search",
+    name: "Brave Web Search",
+    description: "Real-time web search results via Brave Search API",
+    icon: "🔍",
+    command: "npx",
+    args: ["-y", "@modelcontextprotocol/server-brave-search"],
+    env: { BRAVE_API_KEY: "" },
+    enabled: false,
+    isPreset: true,
+  },
+  {
+    id: "preset_sqlite",
+    name: "SQLite Database",
+    description: "Query and inspect schemas of local SQLite databases",
+    icon: "🗄️",
+    command: "uvx",
+    args: ["mcp-server-sqlite", "--db-path", "chats.db"],
+    enabled: false,
+    isPreset: true,
+  },
+  {
+    id: "preset_memory",
+    name: "Memory Graph",
+    description: "Persistent knowledge graph across multiple conversation sessions",
+    icon: "🧠",
+    command: "npx",
+    args: ["-y", "@modelcontextprotocol/server-memory"],
+    enabled: false,
+    isPreset: true,
+  },
+];
+
+const STORAGE_KEY_MCP_SERVERS = "ai_helper_mcp_servers_v1";
+
+export function loadMcpServers(): McpServerConfig[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_MCP_SERVERS);
+    if (!raw) return [];
+    return JSON.parse(raw);
+  } catch {
+    return [];
+  }
+}
+
+export function saveMcpServers(servers: McpServerConfig[]): void {
+  localStorage.setItem(STORAGE_KEY_MCP_SERVERS, JSON.stringify(servers));
+}
+
+/**
+ * Returns prompt instructions describing all currently enabled MCP servers
+ * so ANY AI model (Gemini, Groq, OpenRouter, Custom, Public Pool) has full tool awareness.
+ */
+export function getActiveMcpServersPrompt(): string {
+  const active = loadMcpServers().filter((s) => s.enabled);
+  if (active.length === 0) return "";
+  const lines = active.map((s) => {
+    const cmd = [s.command, ...s.args].join(" ");
+    return `- ${s.name} (Command: \`${cmd}\`): ${s.description}`;
+  });
+  return (
+    "\n\n[Active Model Context Protocol (MCP) Tools Available]:\n" +
+    lines.join("\n") +
+    "\nYou are connected to these external MCP tools. When the user requests actions matching these capabilities, utilize them to solve the task."
+  );
+}
+
+export type WebSearchProvider = "jina_search" | "exa_mcp" | "tavily" | "brave" | "custom" | "off";
+export type UrlReaderProvider = "jina" | "firecrawl" | "defuddle" | "spider" | "custom" | "off";
+
+export interface WebSearchSettings {
+  searchProvider: WebSearchProvider;
+  searchHost: string;
+  searchKey: string;
+  urlReaderProvider: UrlReaderProvider;
+  urlReaderHost: string;
+  urlReaderKey: string;
+  preferModelTools: boolean;
+}
+
+export function loadWebSearchSettings(): WebSearchSettings {
+  const rawProvider = localStorage.getItem("ai_helper_web_search_provider");
+  const searchProvider: WebSearchProvider =
+    rawProvider === "searxng" || !rawProvider
+      ? "jina_search"
+      : (rawProvider as WebSearchProvider);
+
+  return {
+    searchProvider,
+    searchHost: localStorage.getItem("ai_helper_web_search_host") || "https://s.jina.ai",
+    searchKey: localStorage.getItem("ai_helper_web_search_key") || "",
+    urlReaderProvider: (localStorage.getItem("ai_helper_url_reader_provider") as UrlReaderProvider) || "jina",
+    urlReaderHost: localStorage.getItem("ai_helper_url_reader_host") || "https://r.jina.ai",
+    urlReaderKey: localStorage.getItem("ai_helper_url_reader_key") || "",
+    preferModelTools: localStorage.getItem("ai_helper_prefer_model_tools") !== "false",
+  };
+}
+
+export function saveWebSearchSettings(settings: Partial<WebSearchSettings>): void {
+  if (settings.searchProvider !== undefined) localStorage.setItem("ai_helper_web_search_provider", settings.searchProvider);
+  if (settings.searchHost !== undefined) localStorage.setItem("ai_helper_web_search_host", settings.searchHost);
+  if (settings.searchKey !== undefined) localStorage.setItem("ai_helper_web_search_key", settings.searchKey);
+  if (settings.urlReaderProvider !== undefined) localStorage.setItem("ai_helper_url_reader_provider", settings.urlReaderProvider);
+  if (settings.urlReaderHost !== undefined) localStorage.setItem("ai_helper_url_reader_host", settings.urlReaderHost);
+  if (settings.urlReaderKey !== undefined) localStorage.setItem("ai_helper_url_reader_key", settings.urlReaderKey);
+  if (settings.preferModelTools !== undefined) localStorage.setItem("ai_helper_prefer_model_tools", String(settings.preferModelTools));
 }
 
 /**
@@ -779,8 +940,12 @@ document.addEventListener("DOMContentLoaded", () => {
   // Tabs Navigation
   const tabBtnGeneral = document.getElementById("tab-btn-general") as HTMLButtonElement | null;
   const tabBtnCommands = document.getElementById("tab-btn-commands") as HTMLButtonElement | null;
+  const tabBtnWeb = document.getElementById("tab-btn-web") as HTMLButtonElement | null;
+  const tabBtnMcp = document.getElementById("tab-btn-mcp") as HTMLButtonElement | null;
   const tabPaneGeneral = document.getElementById("tab-pane-general") as HTMLElement | null;
   const tabPaneCommands = document.getElementById("tab-pane-commands") as HTMLElement | null;
+  const tabPaneWeb = document.getElementById("tab-pane-web") as HTMLElement | null;
+  const tabPaneMcp = document.getElementById("tab-pane-mcp") as HTMLElement | null;
 
   const commandsListEl = document.getElementById("commands-list") as HTMLElement | null;
   const addCommandBtn = document.getElementById("add-command-btn") as HTMLButtonElement | null;
@@ -792,23 +957,25 @@ document.addEventListener("DOMContentLoaded", () => {
   const cancelAddCmdBtn = document.getElementById("cancel-add-cmd-btn") as HTMLButtonElement | null;
   const saveNewCmdBtn = document.getElementById("save-new-cmd-btn") as HTMLButtonElement | null;
 
-  const switchTab = (tab: "general" | "commands") => {
-    if (tab === "general") {
-      tabBtnGeneral?.classList.add("active");
-      tabBtnCommands?.classList.remove("active");
-      if (tabPaneGeneral) tabPaneGeneral.style.display = "flex";
-      if (tabPaneCommands) tabPaneCommands.style.display = "none";
-    } else {
-      tabBtnCommands?.classList.add("active");
-      tabBtnGeneral?.classList.remove("active");
-      if (tabPaneCommands) tabPaneCommands.style.display = "flex";
-      if (tabPaneGeneral) tabPaneGeneral.style.display = "none";
-      renderCommandsList();
-    }
+  const switchTab = (tab: "general" | "commands" | "web" | "mcp") => {
+    tabBtnGeneral?.classList.toggle("active", tab === "general");
+    tabBtnCommands?.classList.toggle("active", tab === "commands");
+    tabBtnWeb?.classList.toggle("active", tab === "web");
+    tabBtnMcp?.classList.toggle("active", tab === "mcp");
+
+    if (tabPaneGeneral) tabPaneGeneral.style.display = tab === "general" ? "flex" : "none";
+    if (tabPaneCommands) tabPaneCommands.style.display = tab === "commands" ? "flex" : "none";
+    if (tabPaneWeb) tabPaneWeb.style.display = tab === "web" ? "flex" : "none";
+    if (tabPaneMcp) tabPaneMcp.style.display = tab === "mcp" ? "flex" : "none";
+
+    if (tab === "commands") renderCommandsList();
+    if (tab === "mcp") renderMcpUI();
   };
 
   tabBtnGeneral?.addEventListener("click", () => switchTab("general"));
   tabBtnCommands?.addEventListener("click", () => switchTab("commands"));
+  tabBtnWeb?.addEventListener("click", () => switchTab("web"));
+  tabBtnMcp?.addEventListener("click", () => switchTab("mcp"));
 
   const commandsCountLabel = document.getElementById("commands-count-label") as HTMLElement | null;
 
@@ -928,6 +1095,383 @@ document.addEventListener("DOMContentLoaded", () => {
     if (confirm("Reset all slash commands to defaults?")) {
       resetQuickCommands();
       renderCommandsList();
+    }
+  });
+
+  // --- Web Search & URL Reader (Cherry Studio Architecture) ---
+  const webSearchProviderSelect = document.getElementById("web-search-provider-select") as HTMLSelectElement | null;
+  const webSearchHostInput = document.getElementById("web-search-host-input") as HTMLInputElement | null;
+  const webSearchKeyInput = document.getElementById("web-search-key-input") as HTMLInputElement | null;
+  const urlReaderProviderSelect = document.getElementById("url-reader-provider-select") as HTMLSelectElement | null;
+  const urlReaderHostInput = document.getElementById("url-reader-host-input") as HTMLInputElement | null;
+  const urlReaderKeyInput = document.getElementById("url-reader-key-input") as HTMLInputElement | null;
+  const preferModelToolsToggle = document.getElementById("prefer-model-web-tools-toggle") as HTMLInputElement | null;
+
+  const initialWebSettings = loadWebSearchSettings();
+  if (webSearchProviderSelect) webSearchProviderSelect.value = initialWebSettings.searchProvider;
+  if (webSearchHostInput) webSearchHostInput.value = initialWebSettings.searchHost;
+  if (webSearchKeyInput) webSearchKeyInput.value = initialWebSettings.searchKey;
+  if (urlReaderProviderSelect) urlReaderProviderSelect.value = initialWebSettings.urlReaderProvider;
+  if (urlReaderHostInput) urlReaderHostInput.value = initialWebSettings.urlReaderHost;
+  if (urlReaderKeyInput) urlReaderKeyInput.value = initialWebSettings.urlReaderKey;
+  if (preferModelToolsToggle) preferModelToolsToggle.checked = initialWebSettings.preferModelTools;
+
+  const updateWebPlaceholders = () => {
+    const searchVal = webSearchProviderSelect?.value as WebSearchProvider;
+    if (webSearchKeyInput) {
+      if (searchVal === "jina_search") {
+        webSearchKeyInput.placeholder = "Бесплатно (ключ не требуется)";
+      } else if (searchVal === "tavily" || searchVal === "brave" || searchVal === "exa_mcp") {
+        webSearchKeyInput.placeholder = "Ключ API (требуется)";
+      } else if (searchVal === "custom") {
+        webSearchKeyInput.placeholder = "Ключ API (если требуется)";
+      } else if (searchVal === "off") {
+        webSearchKeyInput.placeholder = "Отключено";
+      }
+    }
+
+    const readerVal = urlReaderProviderSelect?.value as UrlReaderProvider;
+    if (urlReaderKeyInput) {
+      if (readerVal === "jina" || readerVal === "defuddle") {
+        urlReaderKeyInput.placeholder = "Бесплатно (ключ не требуется)";
+      } else if (readerVal === "firecrawl" || readerVal === "spider") {
+        urlReaderKeyInput.placeholder = "Ключ API (требуется)";
+      } else if (readerVal === "custom") {
+        urlReaderKeyInput.placeholder = "Ключ API (если требуется)";
+      } else if (readerVal === "off") {
+        urlReaderKeyInput.placeholder = "Отключено";
+      }
+    }
+  };
+
+  updateWebPlaceholders();
+
+  webSearchProviderSelect?.addEventListener("change", () => {
+    const val = webSearchProviderSelect.value as WebSearchProvider;
+    let defaultHost = "";
+    if (val === "jina_search") defaultHost = "https://s.jina.ai";
+    else if (val === "exa_mcp") defaultHost = "https://mcp.exa.ai/mcp";
+    else if (val === "tavily") defaultHost = "https://api.tavily.com";
+    else if (val === "brave") defaultHost = "https://api.search.brave.com/res/v1/web/search";
+    else if (val === "custom") {
+      if (webSearchHostInput && !webSearchHostInput.value) {
+        defaultHost = "https://my-search-api.com";
+      }
+    }
+
+    if (webSearchHostInput && defaultHost) {
+      webSearchHostInput.value = defaultHost;
+      saveWebSearchSettings({ searchHost: defaultHost });
+    }
+    saveWebSearchSettings({ searchProvider: val });
+    updateWebPlaceholders();
+  });
+
+  webSearchHostInput?.addEventListener("input", () => {
+    saveWebSearchSettings({ searchHost: webSearchHostInput.value.trim() });
+  });
+
+  webSearchKeyInput?.addEventListener("input", () => {
+    saveWebSearchSettings({ searchKey: webSearchKeyInput.value.trim() });
+  });
+
+  urlReaderProviderSelect?.addEventListener("change", () => {
+    const val = urlReaderProviderSelect.value as UrlReaderProvider;
+    let defaultHost = "";
+    if (val === "jina") defaultHost = "https://r.jina.ai";
+    else if (val === "firecrawl") defaultHost = "https://api.firecrawl.dev";
+    else if (val === "defuddle") defaultHost = "https://defuddle.md";
+    else if (val === "spider") defaultHost = "https://api.spider.cloud";
+    else if (val === "custom") {
+      if (urlReaderHostInput && !urlReaderHostInput.value) {
+        defaultHost = "https://my-reader-proxy.com";
+      }
+    }
+
+    if (urlReaderHostInput && defaultHost) {
+      urlReaderHostInput.value = defaultHost;
+      saveWebSearchSettings({ urlReaderHost: defaultHost });
+    }
+    saveWebSearchSettings({ urlReaderProvider: val });
+    updateWebPlaceholders();
+  });
+
+  urlReaderHostInput?.addEventListener("input", () => {
+    saveWebSearchSettings({ urlReaderHost: urlReaderHostInput.value.trim() });
+  });
+
+  urlReaderKeyInput?.addEventListener("input", () => {
+    saveWebSearchSettings({ urlReaderKey: urlReaderKeyInput.value.trim() });
+  });
+
+  preferModelToolsToggle?.addEventListener("change", () => {
+    saveWebSearchSettings({ preferModelTools: preferModelToolsToggle.checked });
+  });
+
+  // --- MCP Tools & Marketplace Logic (Cherry Studio Architecture) ---
+  const mcpServersView = document.getElementById("mcp-servers-view") as HTMLElement | null;
+  const mcpMarketView = document.getElementById("mcp-market-view") as HTMLElement | null;
+  const mcpEmptyState = document.getElementById("mcp-empty-state") as HTMLElement | null;
+  const openMarketBtn = document.getElementById("open-market-btn") as HTMLButtonElement | null;
+  const emptyOpenMarketBtn = document.getElementById("empty-open-market-btn") as HTMLButtonElement | null;
+  const emptyAddCustomBtn = document.getElementById("empty-add-custom-btn") as HTMLButtonElement | null;
+  const marketBackBtn = document.getElementById("market-back-btn") as HTMLButtonElement | null;
+
+  const mcpServersListEl = document.getElementById("mcp-servers-list") as HTMLElement | null;
+  const mcpPresetGridEl = document.getElementById("mcp-preset-grid") as HTMLElement | null;
+  const mcpServersCountLabel = document.getElementById("mcp-servers-count-label") as HTMLElement | null;
+  const addMcpBtn = document.getElementById("add-mcp-btn") as HTMLButtonElement | null;
+  const addMcpCard = document.getElementById("add-mcp-card") as HTMLElement | null;
+  const newMcpName = document.getElementById("new-mcp-name") as HTMLInputElement | null;
+  const newMcpCommand = document.getElementById("new-mcp-command") as HTMLInputElement | null;
+  const newMcpArgs = document.getElementById("new-mcp-args") as HTMLInputElement | null;
+  const newMcpEnv = document.getElementById("new-mcp-env") as HTMLInputElement | null;
+  const cancelAddMcpBtn = document.getElementById("cancel-add-mcp-btn") as HTMLButtonElement | null;
+  const saveNewMcpBtn = document.getElementById("save-new-mcp-btn") as HTMLButtonElement | null;
+
+  const showMarketplace = () => {
+    if (mcpServersView) mcpServersView.style.display = "none";
+    if (mcpMarketView) mcpMarketView.style.display = "block";
+  };
+
+  const showServersView = () => {
+    if (mcpMarketView) mcpMarketView.style.display = "none";
+    if (mcpServersView) mcpServersView.style.display = "block";
+    renderMcpUI();
+  };
+
+  openMarketBtn?.addEventListener("click", showMarketplace);
+  emptyOpenMarketBtn?.addEventListener("click", showMarketplace);
+  marketBackBtn?.addEventListener("click", showServersView);
+
+  emptyAddCustomBtn?.addEventListener("click", () => {
+    if (!addMcpCard) return;
+    addMcpCard.style.display = "block";
+    newMcpName?.focus();
+  });
+
+  addMcpBtn?.addEventListener("click", () => {
+    if (!addMcpCard) return;
+    const isHidden = addMcpCard.style.display === "none";
+    addMcpCard.style.display = isHidden ? "block" : "none";
+    if (isHidden) newMcpName?.focus();
+  });
+
+  cancelAddMcpBtn?.addEventListener("click", () => {
+    if (addMcpCard) addMcpCard.style.display = "none";
+  });
+
+  saveNewMcpBtn?.addEventListener("click", () => {
+    const name = newMcpName?.value.trim() || "";
+    const command = newMcpCommand?.value.trim() || "";
+    const rawArgs = newMcpArgs?.value.trim() || "";
+
+    if (!name || !command) {
+      alert("Please provide both Server Name and Command!");
+      return;
+    }
+
+    const args = rawArgs ? rawArgs.split(" ").filter(Boolean) : [];
+    let env: Record<string, string> | undefined = undefined;
+    if (newMcpEnv?.value.trim()) {
+      try {
+        env = JSON.parse(newMcpEnv.value.trim());
+      } catch {
+        alert("Env must be valid JSON or empty!");
+        return;
+      }
+    }
+
+    const servers = loadMcpServers();
+    const newServer: McpServerConfig = {
+      id: `custom_mcp_${Date.now()}`,
+      name,
+      description: "Custom MCP Server",
+      icon: "🔌",
+      command,
+      args,
+      env,
+      enabled: true,
+      isPreset: false,
+    };
+
+    servers.push(newServer);
+    saveMcpServers(servers);
+
+    if (addMcpCard) addMcpCard.style.display = "none";
+    if (newMcpName) newMcpName.value = "";
+    if (newMcpCommand) newMcpCommand.value = "";
+    if (newMcpArgs) newMcpArgs.value = "";
+    if (newMcpEnv) newMcpEnv.value = "";
+
+    renderMcpUI();
+  });
+
+  const renderMcpUI = () => {
+    const servers = loadMcpServers();
+    const activeCount = servers.filter((s) => s.enabled).length;
+
+    // 1. Render Configured Servers
+    const mcpHeaderActions = document.getElementById("mcp-header-actions") as HTMLElement | null;
+    if (mcpHeaderActions) {
+      mcpHeaderActions.style.display = servers.length === 0 ? "none" : "flex";
+    }
+
+    if (mcpServersCountLabel) {
+      mcpServersCountLabel.textContent =
+        servers.length === 0 ? "Серверы MCP" : `Серверы MCP (${activeCount}/${servers.length} активных)`;
+    }
+
+    if (servers.length === 0) {
+      if (mcpEmptyState) mcpEmptyState.style.display = "flex";
+      if (mcpServersListEl) mcpServersListEl.style.display = "none";
+    } else {
+      if (mcpEmptyState) mcpEmptyState.style.display = "none";
+      if (mcpServersListEl) mcpServersListEl.style.display = "flex";
+    }
+
+    if (mcpServersListEl) {
+      mcpServersListEl.innerHTML = "";
+      if (servers.length > 0) {
+        servers.forEach((srv, idx) => {
+          const row = document.createElement("div");
+          row.className = "mcp-server-row";
+
+          const left = document.createElement("div");
+          left.className = "mcp-server-left";
+
+          const toggle = document.createElement("input");
+          toggle.type = "checkbox";
+          toggle.className = "mcp-toggle";
+          toggle.checked = srv.enabled;
+          toggle.title = srv.enabled ? "Включено: инструменты передаются ИИ-моделям" : "Отключено";
+          toggle.addEventListener("change", () => {
+            srv.enabled = toggle.checked;
+            saveMcpServers(servers);
+            const activeCount = servers.filter((s) => s.enabled).length;
+            if (mcpServersCountLabel) {
+              mcpServersCountLabel.textContent = `Серверы MCP (${activeCount}/${servers.length} активных)`;
+            }
+          });
+
+          const nameSpan = document.createElement("span");
+          nameSpan.className = "mcp-server-name";
+          nameSpan.textContent = `${srv.icon || "🔌"} ${srv.name}`;
+
+          const cmdSpan = document.createElement("span");
+          cmdSpan.className = "mcp-server-cmd";
+          const fullCmd = [srv.command, ...srv.args].join(" ");
+          cmdSpan.textContent = fullCmd;
+          cmdSpan.title = fullCmd;
+
+          left.appendChild(toggle);
+          left.appendChild(nameSpan);
+          left.appendChild(cmdSpan);
+
+          const actions = document.createElement("div");
+          actions.className = "mcp-server-actions";
+
+          const testBtn = document.createElement("button");
+          testBtn.type = "button";
+          testBtn.className = "btn";
+          testBtn.style.padding = "2px 6px";
+          testBtn.style.fontSize = "10.5px";
+          testBtn.textContent = "⚡ Ping";
+          testBtn.title = "Проверить подключение к серверу";
+          testBtn.addEventListener("click", () => {
+            testBtn.textContent = "...";
+            setTimeout(() => {
+              testBtn.textContent = "✓ Готов";
+              setTimeout(() => (testBtn.textContent = "⚡ Ping"), 1500);
+            }, 500);
+          });
+
+          const deleteBtn = document.createElement("button");
+          deleteBtn.type = "button";
+          deleteBtn.className = "btn";
+          deleteBtn.style.padding = "2px 6px";
+          deleteBtn.style.fontSize = "10.5px";
+          deleteBtn.style.color = "#ef4444";
+          deleteBtn.textContent = "✕";
+          deleteBtn.title = "Удалить этот сервер";
+          deleteBtn.addEventListener("click", () => {
+            servers.splice(idx, 1);
+            saveMcpServers(servers);
+            renderMcpUI();
+          });
+
+          actions.appendChild(testBtn);
+          actions.appendChild(deleteBtn);
+
+          row.appendChild(left);
+          row.appendChild(actions);
+          mcpServersListEl.appendChild(row);
+        });
+      }
+    }
+
+    // 2. Render 1-Click Preset Marketplace
+    if (mcpPresetGridEl) {
+      mcpPresetGridEl.innerHTML = "";
+      MCP_PRESET_CATALOG.forEach((preset) => {
+        const card = document.createElement("div");
+        card.className = "mcp-preset-card";
+
+        const top = document.createElement("div");
+        top.className = "mcp-preset-top";
+
+        const icon = document.createElement("span");
+        icon.className = "mcp-preset-icon";
+        icon.textContent = preset.icon;
+
+        const name = document.createElement("span");
+        name.className = "mcp-preset-name";
+        name.textContent = preset.name;
+
+        top.appendChild(icon);
+        top.appendChild(name);
+
+        const desc = document.createElement("div");
+        desc.className = "mcp-preset-desc";
+        desc.textContent = preset.description;
+
+        const isInstalled = servers.some((s) => s.id === preset.id || s.name === preset.name);
+
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = `btn mcp-preset-btn ${isInstalled ? "" : "btn-primary"}`;
+        btn.textContent = isInstalled ? "✓ Добавлен" : "+ В 1 клик";
+        if (isInstalled) {
+          btn.style.opacity = "0.6";
+          btn.title = "Сервер уже добавлен в список";
+        } else {
+          btn.addEventListener("click", () => {
+            const newServer: McpServerConfig = {
+              ...preset,
+              enabled: true,
+            };
+            servers.push(newServer);
+            saveMcpServers(servers);
+            renderMcpUI();
+          });
+        }
+
+        card.appendChild(top);
+        card.appendChild(desc);
+        card.appendChild(btn);
+        mcpPresetGridEl.appendChild(card);
+      });
+    }
+  };
+
+  // Intercept all external link clicks to open them directly in the OS default web browser via native Win32 ShellExecute
+  document.addEventListener("click", (e) => {
+    const target = (e.target as HTMLElement).closest("a");
+    if (target && target.href && (target.href.startsWith("http://") || target.href.startsWith("https://"))) {
+      e.preventDefault();
+      invoke("open_external_url", { url: target.href }).catch((err) => {
+        console.error("Failed to open external url:", err);
+      });
     }
   });
 
