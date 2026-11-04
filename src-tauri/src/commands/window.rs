@@ -175,6 +175,96 @@ pub fn cancel_crop_region(app: AppHandle) {
     }
 }
 
+/// Representation of configured global shortcuts.
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct HotkeyConfig {
+    pub main: String,
+    pub snip: String,
+}
+
+/// Retrieves the currently active global shortcuts from managed AppState.
+#[tauri::command]
+pub fn get_registered_hotkeys(app: AppHandle) -> Result<HotkeyConfig, String> {
+    use crate::AppState;
+    if let Some(state) = app.try_state::<AppState>() {
+        let main = state.hotkey_main.lock().unwrap().clone();
+        let snip = state.hotkey_snip.lock().unwrap().clone();
+        Ok(HotkeyConfig { main, snip })
+    } else {
+        Ok(HotkeyConfig {
+            main: "F7".to_string(),
+            snip: "Alt+F7".to_string(),
+        })
+    }
+}
+
+/// Dynamically unregisters previous hotkeys and binds new ones via Windows RegisterHotKey API.
+/// Persists the new combinations into SQLite kv_settings and updates the system tray tooltip.
+#[tauri::command]
+pub fn update_registered_hotkeys(app: AppHandle, main: String, snip: String) -> Result<(), String> {
+    use crate::AppState;
+    use crate::storage::db::DatabaseManager;
+    use tauri_plugin_global_shortcut::GlobalShortcutExt;
+
+    let main_trimmed = main.trim();
+    let snip_trimmed = snip.trim();
+
+    if main_trimmed.is_empty() || snip_trimmed.is_empty() {
+        return Err("Горячие клавиши не могут быть пустыми".to_string());
+    }
+
+    if main_trimmed.eq_ignore_ascii_case(snip_trimmed) {
+        return Err("Комбинации для ассистента и скриншота не должны совпадать".to_string());
+    }
+
+    let global_shortcut = app.global_shortcut();
+
+    // 1. Unregister all existing shortcuts
+    let _ = global_shortcut.unregister_all();
+
+    // 2. Try to register new main shortcut
+    if let Err(e) = global_shortcut.register(main_trimmed) {
+        // Fallback: restore defaults if new shortcut fails
+        let _ = global_shortcut.register("F7");
+        let _ = global_shortcut.register("Alt+F7");
+        return Err(format!("Не удалось зарегистрировать клавишу '{}': {:?}", main_trimmed, e));
+    }
+
+    // 3. Try to register new snip shortcut
+    if let Err(e) = global_shortcut.register(snip_trimmed) {
+        let _ = global_shortcut.unregister_all();
+        let _ = global_shortcut.register("F7");
+        let _ = global_shortcut.register("Alt+F7");
+        return Err(format!("Не удалось зарегистрировать клавишу '{}': {:?}", snip_trimmed, e));
+    }
+
+    // 4. Update in AppState
+    if let Some(state) = app.try_state::<AppState>() {
+        if let Ok(mut m) = state.hotkey_main.lock() {
+            *m = main_trimmed.to_string();
+        }
+        if let Ok(mut s) = state.hotkey_snip.lock() {
+            *s = snip_trimmed.to_string();
+        }
+    }
+
+    // 5. Persist into SQLite
+    if let Some(db) = app.try_state::<DatabaseManager>() {
+        let _ = db.set_setting("hotkey_main", main_trimmed);
+        let _ = db.set_setting("hotkey_snip", snip_trimmed);
+    }
+
+    // 6. Update tray tooltip
+    if let Some(tray) = app.tray_by_id("main-tray") {
+        let _ = tray.set_tooltip(Some(&format!(
+            "AI Helper — {} (Ассистент) / {} (Вырезать область)",
+            main_trimmed, snip_trimmed
+        )));
+    }
+
+    Ok(())
+}
+
 /// Opens an external URL in the default system web browser.
 ///
 /// Why:
@@ -213,4 +303,6 @@ pub fn open_external_url(url: String) -> Result<(), String> {
         Err("Unsupported OS".to_string())
     }
 }
+
+
 

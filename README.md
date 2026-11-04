@@ -46,14 +46,16 @@ $$\text{AI Packet} = \mathbf{Context\ Passport} + \mathbf{Content} + \mathbf{Pro
 
 ## ⌨️ Global Shortcuts
 
-| Shortcut | Action |
-| :--- | :--- |
-| **`F7`** | **Smart Summon:** captures active window context (selection or screenshot) and summons assistant. |
-| **`Alt + F7`** | **Precision Snipping:** freezes desktop in RAM and reveals interactive region crop overlay. |
-| **`Escape`** | 1st press collapses response / closes dialogs; 2nd press completely hides assistant. |
-| **`Ctrl + H`** | Toggles multi-turn thread history menu. |
-| **`Ctrl + [` / `Ctrl + ]`** | Fast-cycles through previous conversation threads. |
-| **`Enter`** | Sends prompt (handles IME composition cleanly for international keyboards). |
+> All global shortcuts can be fully customized with your preferred key combinations in **AI Settings → Hotkeys**.
+
+| Shortcut | Default Binding | Action |
+| :--- | :--- | :--- |
+| **Smart Summon** | `F7` (or custom: `Alt+Space`, `Ctrl+Space`, etc.) | Captures active window context (selection or screenshot) and summons assistant. |
+| **Precision Snipping** | `Alt + F7` (or custom: `Ctrl+Shift+S`, `Alt+S`, etc.) | Freezes desktop in RAM and reveals interactive region crop overlay. |
+| **Hide / Collapse** | `Escape` | 1st press collapses response / closes dialogs; 2nd press completely hides assistant. |
+| **History Menu** | `Ctrl + H` | Toggles multi-turn thread history menu. |
+| **Cycle Threads** | `Ctrl + [` / `Ctrl + ]` | Fast-cycles through previous conversation threads. |
+| **Send Query** | `Enter` | Sends prompt (handles IME composition cleanly for international keyboards). |
 
 ---
 

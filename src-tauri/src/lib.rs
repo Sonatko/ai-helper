@@ -18,6 +18,8 @@ pub struct AppState {
     pub last_passport: Mutex<Option<system::passport::WindowPassport>>,
     pub last_content: Mutex<Option<system::content::CapturedContent>>,
     pub last_screen_freeze: Mutex<Option<system::content::RawScreenCapture>>,
+    pub hotkey_main: Mutex<String>,
+    pub hotkey_snip: Mutex<String>,
 }
 
 /// The core library entry point for the AI Helper desktop application.
@@ -33,6 +35,8 @@ pub fn run() {
             last_passport: Mutex::new(None),
             last_content: Mutex::new(None),
             last_screen_freeze: Mutex::new(None),
+            hotkey_main: Mutex::new("F7".to_string()),
+            hotkey_snip: Mutex::new("Alt+F7".to_string()),
         })
         // Register IPC commands callable from frontend
         .invoke_handler(tauri::generate_handler![
@@ -46,6 +50,8 @@ pub fn run() {
             commands::window::open_external_url,
             commands::window::confirm_crop_region,
             commands::window::cancel_crop_region,
+            commands::window::get_registered_hotkeys,
+            commands::window::update_registered_hotkeys,
             commands::chat::get_chat_sessions,
             commands::chat::save_chat_session,
             commands::chat::get_chat_messages,
@@ -65,19 +71,20 @@ pub fn run() {
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
                     if event.state == ShortcutState::Pressed {
-                        let shortcut_str = format!("{:?}", shortcut).to_lowercase();
-                        let is_alt_key_held = {
-                            #[cfg(windows)]
-                            unsafe {
-                                use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_MENU};
-                                (GetAsyncKeyState(VK_MENU.0 as i32) as u16 & 0x8000) != 0
+                        let is_snip = if let Some(state) = app.try_state::<AppState>() {
+                            let snip_cfg = state.hotkey_snip.lock().unwrap().clone();
+                            if let Ok(parsed) = snip_cfg.parse::<tauri_plugin_global_shortcut::Shortcut>() {
+                                shortcut == &parsed
+                            } else {
+                                let shortcut_str = format!("{:?}", shortcut).to_lowercase();
+                                shortcut_str.contains("alt")
                             }
-                            #[cfg(not(windows))]
-                            false
+                        } else {
+                            let shortcut_str = format!("{:?}", shortcut).to_lowercase();
+                            shortcut_str.contains("alt")
                         };
-                        let is_alt = is_alt_key_held || shortcut_str.contains("alt");
 
-                        if is_alt {
+                        if is_snip {
                             // ========================================================
                             // SCENARIO 3: INTERACTIVE SCREEN REGION SNIP (Alt + F7)
                             // ========================================================
@@ -238,10 +245,9 @@ pub fn run() {
             let quit_item = MenuItem::with_id(app, "quit", "🚪 Выход", true, None::<&str>)?;
             let tray_menu = Menu::with_items(app, &[&toggle_item, &snip_item, &settings_item, &quit_item])?;
 
-            let mut tray_builder = TrayIconBuilder::new()
+            let mut tray_builder = TrayIconBuilder::with_id("main-tray")
                 .menu(&tray_menu)
                 .show_menu_on_left_click(false)
-                .tooltip("AI Helper — F7 (Ассистент) / Alt+F7 (Вырезать область)")
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "toggle" => {
                         if let Some(window) = app.get_webview_window("main") {
@@ -304,6 +310,29 @@ pub fn run() {
                     }
                 });
 
+            // Load configured global shortcuts from SQLite or use defaults
+            let (saved_main, saved_snip) = if let Some(db) = app.try_state::<storage::db::DatabaseManager>() {
+                let m = db.get_setting("hotkey_main").unwrap_or(None).unwrap_or_else(|| "F7".to_string());
+                let s = db.get_setting("hotkey_snip").unwrap_or(None).unwrap_or_else(|| "Alt+F7".to_string());
+                (m, s)
+            } else {
+                ("F7".to_string(), "Alt+F7".to_string())
+            };
+
+            if let Some(state) = app.try_state::<AppState>() {
+                if let Ok(mut m) = state.hotkey_main.lock() {
+                    *m = saved_main.clone();
+                }
+                if let Ok(mut s) = state.hotkey_snip.lock() {
+                    *s = saved_snip.clone();
+                }
+            }
+
+            tray_builder = tray_builder.tooltip(format!(
+                "AI Helper — {} (Ассистент) / {} (Вырезать область)",
+                saved_main, saved_snip
+            ));
+
             if let Some(icon) = app.default_window_icon() {
                 tray_builder = tray_builder.icon(icon.clone());
             }
@@ -312,23 +341,24 @@ pub fn run() {
 
             // Register global shortcuts
             let global_shortcut = app.global_shortcut();
-            let primary_key = "F7";
-            let fallback_key = "F8";
-            if let Err(err) = global_shortcut.register(primary_key) {
+            if let Err(err) = global_shortcut.register(saved_main.as_str()) {
                 eprintln!(
-                    "[AI Helper] Warning: Primary hotkey '{}' is occupied ({:?}). Attempting fallback to '{}'...",
-                    primary_key, err, fallback_key
+                    "[AI Helper] Warning: Hotkey '{}' could not be registered ({:?}). Falling back to 'F7'...",
+                    saved_main, err
                 );
-                let _ = global_shortcut.register(fallback_key);
+                let _ = global_shortcut.register("F7");
             } else {
-                println!("[AI Helper] Successfully registered global hotkey: {}", primary_key);
+                println!("[AI Helper] Successfully registered global hotkey: {}", saved_main);
             }
 
-            let alt_key = "Alt+F7";
-            if let Err(err) = global_shortcut.register(alt_key) {
-                eprintln!("[AI Helper] Notice: Shortcut '{}' could not be registered: {:?}", alt_key, err);
+            if let Err(err) = global_shortcut.register(saved_snip.as_str()) {
+                eprintln!(
+                    "[AI Helper] Notice: Shortcut '{}' could not be registered: {:?}",
+                    saved_snip, err
+                );
+                let _ = global_shortcut.register("Alt+F7");
             } else {
-                println!("[AI Helper] Successfully registered global hotkey: {}", alt_key);
+                println!("[AI Helper] Successfully registered global hotkey: {}", saved_snip);
             }
 
             Ok(())

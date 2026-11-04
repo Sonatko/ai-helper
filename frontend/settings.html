@@ -458,6 +458,7 @@
         <button type="button" id="tab-btn-commands" class="segmented-btn">Commands</button>
         <button type="button" id="tab-btn-web" class="segmented-btn">Web Search</button>
         <button type="button" id="tab-btn-mcp" class="segmented-btn">MCP Tools</button>
+        <button type="button" id="tab-btn-hotkeys" class="segmented-btn">Hotkeys</button>
       </div>
     </div>
 
@@ -725,6 +726,64 @@
             <span>Awesome MCP ↗</span>
           </a>
         </div>
+      </div>
+    </div>
+
+    <!-- Tab 5: Hotkeys (System Shortcuts) -->
+    <div id="tab-pane-hotkeys" class="tab-pane" style="display: none;">
+      <div style="font-size: 11px; color: #94a3b8; margin-bottom: 8px;">
+        Настройка глобальных системных комбинаций клавиш для вызова ассистента из любого приложения:
+      </div>
+
+      <!-- Hotkey 1: Smart Summon -->
+      <div style="background: #141620; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px;">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <div style="display: flex; flex-direction: column; gap: 2px;">
+            <span style="font-size: 12px; font-weight: 600; color: #38bdf8;">⚡ Вызов ассистента (Smart Summon)</span>
+            <span style="font-size: 10.5px; color: #64748b;">Мгновенный захват контекста и открытие строки ввода</span>
+          </div>
+          <select id="hotkey-main-select" class="styled-select" style="width: 160px; padding: 3px 6px; font-size: 11.5px;">
+            <option value="F7">F7 (По умолчанию)</option>
+            <option value="F8">F8</option>
+            <option value="F9">F9</option>
+            <option value="F10">F10</option>
+            <option value="Alt+Space">Alt + Space</option>
+            <option value="Ctrl+Space">Ctrl + Space</option>
+            <option value="custom">➕ Своя комбинация...</option>
+          </select>
+        </div>
+        <div id="hotkey-main-custom-row" style="display: none; margin-top: 4px;">
+          <input type="text" id="hotkey-main-custom-input" class="styled-input" placeholder="Например: Ctrl+Shift+Space, Alt+Q, F6" style="font-size: 11.5px;" />
+        </div>
+      </div>
+
+      <!-- Hotkey 2: Screen Region Snip -->
+      <div style="background: #141620; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px;">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <div style="display: flex; flex-direction: column; gap: 2px;">
+            <span style="font-size: 12px; font-weight: 600; color: #38bdf8;">✂️ Вырезать область экрана (Screen Snip)</span>
+            <span style="font-size: 10.5px; color: #64748b;">Заморозка кадра в RAM и интерактивное выделение области</span>
+          </div>
+          <select id="hotkey-snip-select" class="styled-select" style="width: 160px; padding: 3px 6px; font-size: 11.5px;">
+            <option value="Alt+F7">Alt + F7 (По умолчанию)</option>
+            <option value="Alt+F8">Alt + F8</option>
+            <option value="Ctrl+Shift+S">Ctrl + Shift + S</option>
+            <option value="Alt+S">Alt + S</option>
+            <option value="Alt+X">Alt + X</option>
+            <option value="custom">➕ Своя комбинация...</option>
+          </select>
+        </div>
+        <div id="hotkey-snip-custom-row" style="display: none; margin-top: 4px;">
+          <input type="text" id="hotkey-snip-custom-input" class="styled-input" placeholder="Например: Alt+Shift+S, Ctrl+Alt+C" style="font-size: 11.5px;" />
+        </div>
+      </div>
+
+      <!-- Action Button & Status -->
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <span id="hotkey-status-msg" style="font-size: 11px; color: #10b981;"></span>
+        <button type="button" id="save-hotkeys-btn" class="btn btn-primary" style="padding: 4px 14px; font-size: 11px;">
+          Применить и сохранить
+        </button>
       </div>
     </div>
 

@@ -942,10 +942,13 @@ document.addEventListener("DOMContentLoaded", () => {
   const tabBtnCommands = document.getElementById("tab-btn-commands") as HTMLButtonElement | null;
   const tabBtnWeb = document.getElementById("tab-btn-web") as HTMLButtonElement | null;
   const tabBtnMcp = document.getElementById("tab-btn-mcp") as HTMLButtonElement | null;
+  const tabBtnHotkeys = document.getElementById("tab-btn-hotkeys") as HTMLButtonElement | null;
+
   const tabPaneGeneral = document.getElementById("tab-pane-general") as HTMLElement | null;
   const tabPaneCommands = document.getElementById("tab-pane-commands") as HTMLElement | null;
   const tabPaneWeb = document.getElementById("tab-pane-web") as HTMLElement | null;
   const tabPaneMcp = document.getElementById("tab-pane-mcp") as HTMLElement | null;
+  const tabPaneHotkeys = document.getElementById("tab-pane-hotkeys") as HTMLElement | null;
 
   const commandsListEl = document.getElementById("commands-list") as HTMLElement | null;
   const addCommandBtn = document.getElementById("add-command-btn") as HTMLButtonElement | null;
@@ -957,25 +960,29 @@ document.addEventListener("DOMContentLoaded", () => {
   const cancelAddCmdBtn = document.getElementById("cancel-add-cmd-btn") as HTMLButtonElement | null;
   const saveNewCmdBtn = document.getElementById("save-new-cmd-btn") as HTMLButtonElement | null;
 
-  const switchTab = (tab: "general" | "commands" | "web" | "mcp") => {
+  const switchTab = (tab: "general" | "commands" | "web" | "mcp" | "hotkeys") => {
     tabBtnGeneral?.classList.toggle("active", tab === "general");
     tabBtnCommands?.classList.toggle("active", tab === "commands");
     tabBtnWeb?.classList.toggle("active", tab === "web");
     tabBtnMcp?.classList.toggle("active", tab === "mcp");
+    tabBtnHotkeys?.classList.toggle("active", tab === "hotkeys");
 
     if (tabPaneGeneral) tabPaneGeneral.style.display = tab === "general" ? "flex" : "none";
     if (tabPaneCommands) tabPaneCommands.style.display = tab === "commands" ? "flex" : "none";
     if (tabPaneWeb) tabPaneWeb.style.display = tab === "web" ? "flex" : "none";
     if (tabPaneMcp) tabPaneMcp.style.display = tab === "mcp" ? "flex" : "none";
+    if (tabPaneHotkeys) tabPaneHotkeys.style.display = tab === "hotkeys" ? "flex" : "none";
 
     if (tab === "commands") renderCommandsList();
     if (tab === "mcp") renderMcpUI();
+    if (tab === "hotkeys") loadHotkeysFromBackend();
   };
 
   tabBtnGeneral?.addEventListener("click", () => switchTab("general"));
   tabBtnCommands?.addEventListener("click", () => switchTab("commands"));
   tabBtnWeb?.addEventListener("click", () => switchTab("web"));
   tabBtnMcp?.addEventListener("click", () => switchTab("mcp"));
+  tabBtnHotkeys?.addEventListener("click", () => switchTab("hotkeys"));
 
   const commandsCountLabel = document.getElementById("commands-count-label") as HTMLElement | null;
 
@@ -1474,6 +1481,108 @@ document.addEventListener("DOMContentLoaded", () => {
       });
     }
   });
+
+  // --- Hotkeys Settings Logic ---
+  const hotkeyMainSelect = document.getElementById("hotkey-main-select") as HTMLSelectElement | null;
+  const hotkeyMainCustomRow = document.getElementById("hotkey-main-custom-row") as HTMLElement | null;
+  const hotkeyMainCustomInput = document.getElementById("hotkey-main-custom-input") as HTMLInputElement | null;
+  const hotkeySnipSelect = document.getElementById("hotkey-snip-select") as HTMLSelectElement | null;
+  const hotkeySnipCustomRow = document.getElementById("hotkey-snip-custom-row") as HTMLElement | null;
+  const hotkeySnipCustomInput = document.getElementById("hotkey-snip-custom-input") as HTMLInputElement | null;
+  const saveHotkeysBtn = document.getElementById("save-hotkeys-btn") as HTMLButtonElement | null;
+  const hotkeyStatusMsg = document.getElementById("hotkey-status-msg") as HTMLElement | null;
+
+  interface HotkeyConfig {
+    main: string;
+    snip: string;
+  }
+
+  const loadHotkeysFromBackend = async () => {
+    try {
+      const cfg = await invoke<HotkeyConfig>("get_registered_hotkeys");
+      if (!cfg || !hotkeyMainSelect || !hotkeySnipSelect) return;
+
+      const mainFound = Array.from(hotkeyMainSelect.options).some((o) => o.value === cfg.main);
+      if (mainFound) {
+        hotkeyMainSelect.value = cfg.main;
+        if (hotkeyMainCustomRow) hotkeyMainCustomRow.style.display = "none";
+      } else {
+        hotkeyMainSelect.value = "custom";
+        if (hotkeyMainCustomRow) hotkeyMainCustomRow.style.display = "block";
+        if (hotkeyMainCustomInput) hotkeyMainCustomInput.value = cfg.main;
+      }
+
+      const snipFound = Array.from(hotkeySnipSelect.options).some((o) => o.value === cfg.snip);
+      if (snipFound) {
+        hotkeySnipSelect.value = cfg.snip;
+        if (hotkeySnipCustomRow) hotkeySnipCustomRow.style.display = "none";
+      } else {
+        hotkeySnipSelect.value = "custom";
+        if (hotkeySnipCustomRow) hotkeySnipCustomRow.style.display = "block";
+        if (hotkeySnipCustomInput) hotkeySnipCustomInput.value = cfg.snip;
+      }
+    } catch (err) {
+      console.error("Failed to load hotkeys from backend:", err);
+    }
+  };
+
+  hotkeyMainSelect?.addEventListener("change", () => {
+    if (!hotkeyMainCustomRow) return;
+    const isCustom = hotkeyMainSelect.value === "custom";
+    hotkeyMainCustomRow.style.display = isCustom ? "block" : "none";
+    if (isCustom) hotkeyMainCustomInput?.focus();
+  });
+
+  hotkeySnipSelect?.addEventListener("change", () => {
+    if (!hotkeySnipCustomRow) return;
+    const isCustom = hotkeySnipSelect.value === "custom";
+    hotkeySnipCustomRow.style.display = isCustom ? "block" : "none";
+    if (isCustom) hotkeySnipCustomInput?.focus();
+  });
+
+  saveHotkeysBtn?.addEventListener("click", async () => {
+    if (!hotkeyMainSelect || !hotkeySnipSelect) return;
+
+    let mainKey = hotkeyMainSelect.value;
+    if (mainKey === "custom") {
+      mainKey = hotkeyMainCustomInput?.value.trim() || "";
+    }
+
+    let snipKey = hotkeySnipSelect.value;
+    if (snipKey === "custom") {
+      snipKey = hotkeySnipCustomInput?.value.trim() || "";
+    }
+
+    if (!mainKey || !snipKey) {
+      if (hotkeyStatusMsg) {
+        hotkeyStatusMsg.style.color = "#ef4444";
+        hotkeyStatusMsg.textContent = "Комбинации клавиш не могут быть пустыми!";
+      }
+      return;
+    }
+
+    try {
+      if (saveHotkeysBtn) saveHotkeysBtn.disabled = true;
+      await invoke("update_registered_hotkeys", { main: mainKey, snip: snipKey });
+
+      if (hotkeyStatusMsg) {
+        hotkeyStatusMsg.style.color = "#10b981";
+        hotkeyStatusMsg.textContent = "✓ Сохранено в ядре Windows и трее";
+        setTimeout(() => {
+          if (hotkeyStatusMsg) hotkeyStatusMsg.textContent = "";
+        }, 3000);
+      }
+    } catch (err) {
+      if (hotkeyStatusMsg) {
+        hotkeyStatusMsg.style.color = "#ef4444";
+        hotkeyStatusMsg.textContent = String(err);
+      }
+    } finally {
+      if (saveHotkeysBtn) saveHotkeysBtn.disabled = false;
+    }
+  });
+
+  loadHotkeysFromBackend();
 
   // Close Settings Window
   const closeWindow = async () => {

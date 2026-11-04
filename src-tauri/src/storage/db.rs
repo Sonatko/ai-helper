@@ -74,7 +74,12 @@ impl DatabaseManager {
                  FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
              );
 
-             CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, created_at);",
+             CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, created_at);
+
+             CREATE TABLE IF NOT EXISTS kv_settings (
+                 key TEXT PRIMARY KEY,
+                 value TEXT NOT NULL
+             );",
         )?;
 
         // Idempotent schema migration for existing databases created without image_path column
@@ -262,6 +267,29 @@ impl DatabaseManager {
             }
         }
 
+        Ok(())
+    }
+
+    /// Retrieves a persistent configuration value by key from SQLite.
+    pub fn get_setting(&self, key: &str) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT value FROM kv_settings WHERE key = ?1 LIMIT 1;")?;
+        let mut rows = stmt.query(params![key])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some(row.get(0)?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Stores or updates a persistent configuration key-value pair in SQLite.
+    pub fn set_setting(&self, key: &str, value: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO kv_settings (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value;",
+            params![key, value],
+        )?;
         Ok(())
     }
 }
