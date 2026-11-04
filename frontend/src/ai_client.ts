@@ -413,15 +413,9 @@ async function streamAutoWithFailover(
   history: HistoryMessage[],
   callbacks: StreamCallbacks
 ): Promise<void> {
-  const geminiKey =
-    localStorage.getItem("ai_helper_gemini_api_key") ||
-    (import.meta.env.VITE_GEMINI_API_KEY as string) ||
-    "";
+  const geminiKey = localStorage.getItem("ai_helper_gemini_api_key") || "";
   const groqKey = localStorage.getItem("ai_helper_groq_api_key") || "";
-  const openRouterKey =
-    localStorage.getItem("ai_helper_openrouter_api_key") ||
-    (import.meta.env.VITE_OPENROUTER_API_KEY as string) ||
-    "";
+  const openRouterKey = localStorage.getItem("ai_helper_openrouter_api_key") || "";
   const localUrl = localStorage.getItem("ai_helper_local_url") || "";
 
   type Runner = {
@@ -638,10 +632,7 @@ async function streamOpenRouter(
   callbacks: StreamCallbacks,
   isAuto = false
 ): Promise<void> {
-  const apiKey =
-    localStorage.getItem("ai_helper_openrouter_api_key") ||
-    (import.meta.env.VITE_OPENROUTER_API_KEY as string) ||
-    "";
+  const apiKey = localStorage.getItem("ai_helper_openrouter_api_key") || "";
   if (!apiKey) {
     callbacks.onError("Ключ OpenRouter не задан. Вставьте ключ в Настройках или выберите общий пул.");
     return;
@@ -725,10 +716,7 @@ async function streamGemini(
   callbacks: StreamCallbacks,
   isAuto = false
 ): Promise<void> {
-  const apiKey =
-    localStorage.getItem("ai_helper_gemini_api_key") ||
-    (import.meta.env.VITE_GEMINI_API_KEY as string) ||
-    "";
+  const apiKey = localStorage.getItem("ai_helper_gemini_api_key") || "";
   if (!apiKey) {
     callbacks.onError("Ключ Google AI Studio не задан. Вставьте ключ в Настройках или выберите общий пул.");
     return;

@@ -96,3 +96,4 @@ The compiled executable installer will be generated in `src-tauri/target/release
 
 ## 📄 License
 MIT License. Free for personal and commercial open-source use.
+
