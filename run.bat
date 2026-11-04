@@ -41,3 +41,4 @@ echo [INFO] Launching assistant with Tauri v2...
 npm run tauri dev
 
 pause
+
