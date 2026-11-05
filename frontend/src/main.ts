@@ -111,8 +111,13 @@ window.addEventListener("DOMContentLoaded", () => {
   const queryInput = document.getElementById("query-input") as HTMLInputElement | null;
   const badgePill = document.getElementById("badge-pill") as HTMLElement | null;
   const badgePillText = document.getElementById("badge-pill-text") as HTMLElement | null;
+  const badgeDismissBtn = document.getElementById("badge-dismiss-btn") as HTMLElement | null;
   const badgePreviewPopup = document.getElementById("badge-preview-popup") as HTMLElement | null;
   const badgePreviewImg = document.getElementById("badge-preview-img") as HTMLImageElement | null;
+  const imageModal = document.getElementById("image-modal") as HTMLElement | null;
+  const imageModalBackdrop = document.getElementById("image-modal-backdrop") as HTMLElement | null;
+  const imageModalClose = document.getElementById("image-modal-close") as HTMLElement | null;
+  const imageModalImg = document.getElementById("image-modal-img") as HTMLImageElement | null;
   const threadPill = document.getElementById("thread-pill") as HTMLElement | null;
   const threadText = document.getElementById("thread-text") as HTMLElement | null;
   const capsuleHistoryBtn = document.getElementById("capsule-history-btn") as HTMLButtonElement | null;
@@ -137,6 +142,36 @@ window.addEventListener("DOMContentLoaded", () => {
     matchingCommands = [];
     selectedCommandIndex = 0;
   };
+
+  const openImageModal = (src: string) => {
+    if (!imageModal || !imageModalImg) return;
+    imageModalImg.src = src;
+    imageModal.classList.remove("hidden");
+  };
+
+  const closeImageModal = () => {
+    if (!imageModal || !imageModalImg) return;
+    imageModal.classList.add("hidden");
+    imageModalImg.src = "";
+  };
+
+  imageModalClose?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    closeImageModal();
+  });
+
+  imageModalBackdrop?.addEventListener("click", () => {
+    closeImageModal();
+  });
+
+  badgeDismissBtn?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    currentContent = null;
+    invoke("clear_last_content").catch(console.error);
+    if (badgePreviewPopup) badgePreviewPopup.classList.add("hidden");
+    updateContextBadge();
+    queryInput?.focus();
+  });
 
   const renderCommandsPopup = () => {
     if (!commandsPopup) return;
@@ -315,14 +350,25 @@ window.addEventListener("DOMContentLoaded", () => {
 
       if (msg.role === "user") {
         const imgHtml = msg.image
-          ? `<div class="chat-attached-image-wrap"><img src="${msg.image}" class="chat-attached-image" alt="Captured snippet" /></div>`
+          ? `<div class="chat-attached-image-card" title="Нажмите, чтобы увеличить скриншот">
+               <img src="${msg.image}" class="chat-attached-image-thumb" alt="Вложенный снимок" />
+               <div class="chat-image-overlay">
+                 <span class="chat-image-zoom-icon">🔍 Увеличить</span>
+               </div>
+             </div>`
           : "";
         turnEl.innerHTML = `
-          <div class="chat-user-row">
+          <div class="chat-user-container">
             ${imgHtml}
             <div class="chat-user-bubble">${escapeHtml(msg.content)}</div>
           </div>
         `;
+        if (msg.image) {
+          const imgCard = turnEl.querySelector(".chat-attached-image-card");
+          imgCard?.addEventListener("click", () => {
+            if (msg.image) openImageModal(msg.image);
+          });
+        }
       } else {
         turnEl.innerHTML = `
           <div class="chat-assistant-bubble">${renderMarkdown(msg.content)}</div>
@@ -344,6 +390,9 @@ window.addEventListener("DOMContentLoaded", () => {
   const startNewSession = async () => {
     if (isStreaming) return;
     currentSession = createNewSession();
+    currentContent = null;
+    invoke("clear_last_content").catch(console.error);
+    if (badgePreviewPopup) badgePreviewPopup.classList.add("hidden");
     await collapseAll();
     if (queryInput) {
       queryInput.value = "";
@@ -359,6 +408,7 @@ window.addEventListener("DOMContentLoaded", () => {
       tokenCountEl.textContent = "⚡ 0 токенов";
     }
     updateSessionBadge();
+    updateContextBadge();
     focusInput();
   };
 
@@ -679,8 +729,15 @@ window.addEventListener("DOMContentLoaded", () => {
     // Clear input bar for next turn
     if (queryInput) queryInput.value = "";
 
+    // Consume any captured context atomically for this specific turn only!
+    const capturedForTurn = currentContent;
+    currentContent = null;
+    invoke("clear_last_content").catch(console.error);
+    if (badgePreviewPopup) badgePreviewPopup.classList.add("hidden");
+    updateContextBadge();
+
     // 1. Add User Message to active session
-    const attachedImage = currentContent && currentContent.type === "Screenshot" ? currentContent.payload.base64 : undefined;
+    const attachedImage = capturedForTurn && capturedForTurn.type === "Screenshot" ? capturedForTurn.payload.base64 : undefined;
     const userMsg: ChatMessage = {
       id: `msg_${Date.now()}_u`,
       role: "user",
@@ -745,25 +802,15 @@ window.addEventListener("DOMContentLoaded", () => {
       .slice(0, -1)
       .map((m) => ({ role: m.role, content: m.content, image: m.image }));
 
-    // Attach context content (screenshot, crop region, or highlighted text) if freshly captured
-    if (!currentContent) {
-      try {
-        currentContent = await invoke<CapturedContent | null>("get_last_content");
-      } catch {}
-    }
-
+    // Attach context content (screenshot or highlighted text) only for this specific turn
     let contentPayload: { mode: "text" | "screenshot" | "empty"; text?: string; jpegBase64?: string } = {
       mode: "empty",
     };
 
-    if (currentContent && currentContent.type === "Text") {
-      contentPayload = { mode: "text", text: currentContent.payload };
-      currentContent = null;
-      if (badgePill) badgePill.classList.add("hidden");
-    } else if (currentContent && currentContent.type === "Screenshot") {
-      contentPayload = { mode: "screenshot", jpegBase64: currentContent.payload.base64 };
-      currentContent = null;
-      if (badgePill) badgePill.classList.add("hidden");
+    if (capturedForTurn && capturedForTurn.type === "Text") {
+      contentPayload = { mode: "text", text: capturedForTurn.payload };
+    } else if (capturedForTurn && capturedForTurn.type === "Screenshot") {
+      contentPayload = { mode: "screenshot", jpegBase64: capturedForTurn.payload.base64 };
     }
 
     let accumulatedAssistantText = "";
@@ -1004,9 +1051,15 @@ window.addEventListener("DOMContentLoaded", () => {
       await submitCurrentQuery();
     }
 
-    // Two-stage Escape
+    // Multi-stage Escape handling
     if (event.key === "Escape") {
       event.preventDefault();
+
+      // 0. If image lightbox modal is open -> close modal first
+      if (imageModal && !imageModal.classList.contains("hidden")) {
+        closeImageModal();
+        return;
+      }
 
       // 1. If any panel is open or window is expanded -> 1st Escape collapses to 60px capsule
       const isPanelVisible =

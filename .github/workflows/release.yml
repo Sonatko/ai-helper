@@ -1,0 +1,57 @@
+name: Release AI Helper
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  release:
+    permissions:
+      contents: write
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Install dependencies
+        run: |
+          npm install
+          npm --prefix frontend install
+
+      - name: Build and Publish Tauri Application
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'AI Helper ${{ github.ref_name }}'
+          releaseBody: |
+            ## AI Helper — Нативный ассистент для Windows
+            
+            ### Варианты установки:
+            - **`AI-Helper_..._x64-setup.exe`** — автоматический установщик Windows (создает ярлык в меню «Пуск» и на Рабочем столе).
+            - **`ai-helper.exe` / `.zip`** — портативная версия без установки: скачал и сразу запустил.
+            
+            ### Горячие клавиши по умолчанию:
+            - **`F7`** — Смарт-вызов (анализ активного окна, паспорта и выделения).
+            - **`Alt+F7`** — Интерактивный снимок выбранной области экрана.
+          releaseDraft: false
+          prerelease: false
+

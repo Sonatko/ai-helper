@@ -312,48 +312,32 @@ export async function streamAIResponse(
     effectiveQuery += mcpPrompt;
   }
 
-  // Transparently notify user if a screenshot was taken but the model cannot process vision
-  let effectiveCallbacks = callbacks;
+  // If active provider does not support vision, safely strip image payloads so API won't fail
+  let safeContent = content;
   if (content?.mode === "screenshot" && !isVisionSupported(provider)) {
-    const notice = "📷 *[Model does not support screenshots]*\n\n";
-    let noticeSent = false;
-    effectiveCallbacks = {
-      ...callbacks,
-      onChunk: (chunk: string) => {
-        if (!noticeSent) {
-          noticeSent = true;
-          callbacks.onChunk(notice + chunk);
-        } else {
-          callbacks.onChunk(chunk);
-        }
-      },
-      onFinish: (fullText: string, totalTokens: number, modelUsed?: string, quotaInfo?: ProviderQuotaInfo) => {
-        const finalPayload = noticeSent ? `${notice}${fullText}` : fullText;
-        callbacks.onFinish(finalPayload, totalTokens, modelUsed, quotaInfo);
-      },
-    };
+    safeContent = { mode: "empty" };
   }
 
   if (provider.startsWith("custom_")) {
-    await streamCustomProvider(provider, effectiveQuery, passport, content, history, effectiveCallbacks);
+    await streamCustomProvider(provider, effectiveQuery, passport, safeContent, history, callbacks);
     return;
   }
 
   switch (provider) {
     case "auto":
-      await streamAutoWithFailover(effectiveQuery, passport, content, history, effectiveCallbacks);
+      await streamAutoWithFailover(effectiveQuery, passport, content, history, callbacks);
       break;
     case "gemini_key":
-      await streamGemini(effectiveQuery, passport, content, history, effectiveCallbacks);
+      await streamGemini(effectiveQuery, passport, content, history, callbacks);
       break;
     case "groq_key":
-      await streamGroq(effectiveQuery, passport, content, history, effectiveCallbacks);
+      await streamGroq(effectiveQuery, passport, safeContent, history, callbacks);
       break;
     case "openrouter_key":
-      await streamOpenRouter(effectiveQuery, passport, content, history, effectiveCallbacks);
+      await streamOpenRouter(effectiveQuery, passport, content, history, callbacks);
       break;
     default:
-      await streamPublicPool(effectiveQuery, passport, content, history, effectiveCallbacks);
+      await streamPublicPool(effectiveQuery, passport, safeContent, history, callbacks);
       break;
   }
 }
@@ -537,8 +521,10 @@ async function streamPublicPool(
   const systemText = getStaticSystemPrompt();
   const userText = buildActiveUserMessage(userQuery, passport, content);
 
+  const modelName = "openai-fast";
+  const supportsVision = isVisionSupported("public_pool", modelName);
   const priorMessages = history.slice(-16).map((m) => {
-    if (m.image) {
+    if (m.image && supportsVision) {
       return {
         role: m.role,
         content: [
@@ -554,13 +540,23 @@ async function streamPublicPool(
   });
 
   const endpoint = "https://text.pollinations.ai/openai/chat/completions";
-  const modelName = "openai-fast";
+  const userContent: any[] = [{ type: "text", text: userText }];
+  if (content?.mode === "screenshot" && content.jpegBase64 && supportsVision) {
+    const imgUrl = content.jpegBase64.startsWith("data:")
+      ? content.jpegBase64
+      : `data:image/jpeg;base64,${content.jpegBase64}`;
+    userContent.push({
+      type: "image_url",
+      image_url: { url: imgUrl },
+    });
+  }
+
   const body = {
     model: modelName,
     messages: [
       { role: "system", content: systemText },
       ...priorMessages,
-      { role: "user", content: userText },
+      { role: "user", content: userContent },
     ],
     stream: true,
   };
@@ -590,8 +586,9 @@ async function streamGroq(
   const systemText = getStaticSystemPrompt();
   const userText = buildActiveUserMessage(userQuery, passport, content);
 
+  const supportsVision = isVisionSupported("groq", model);
   const priorMessages = history.slice(-16).map((m) => {
-    if (m.image) {
+    if (m.image && supportsVision) {
       return {
         role: m.role,
         content: [
@@ -641,8 +638,9 @@ async function streamOpenRouter(
   const model = localStorage.getItem("ai_helper_openrouter_model") || "openrouter/free";
   const systemText = getStaticSystemPrompt();
 
+  const supportsVision = isVisionSupported("openrouter_key", model);
   const priorMessages = history.slice(-16).map((m) => {
-    if (m.image) {
+    if (m.image && supportsVision) {
       return {
         role: m.role,
         content: [
@@ -659,8 +657,11 @@ async function streamOpenRouter(
 
   const messages: any[] = [{ role: "system", content: systemText }, ...priorMessages];
 
-  if (content?.mode === "screenshot" && content.jpegBase64) {
+  if (content?.mode === "screenshot" && content.jpegBase64 && supportsVision) {
     const activeText = buildActiveUserMessage(userQuery, passport, null);
+    const imgUrl = content.jpegBase64.startsWith("data:")
+      ? content.jpegBase64
+      : `data:image/jpeg;base64,${content.jpegBase64}`;
     messages.push({
       role: "user",
       content: [
@@ -668,7 +669,7 @@ async function streamOpenRouter(
         {
           type: "image_url",
           image_url: {
-            url: `data:image/jpeg;base64,${content.jpegBase64}`,
+            url: imgUrl,
           },
         },
       ],
@@ -751,11 +752,13 @@ async function streamGemini(
 
   const currentParts: any[] = [{ text: activeText }];
 
-  if (content?.mode === "screenshot" && content.jpegBase64) {
+  const supportsVision = isVisionSupported("gemini_key", model);
+  if (content?.mode === "screenshot" && content.jpegBase64 && supportsVision) {
+    const rawBase64 = content.jpegBase64.replace(/^data:image\/[a-z]+;base64,/, "");
     currentParts.push({
       inlineData: {
         mimeType: "image/jpeg",
-        data: content.jpegBase64,
+        data: rawBase64,
       },
     });
   }
@@ -887,8 +890,9 @@ async function streamCustomLocal(
   const systemText = getStaticSystemPrompt();
   const userText = buildActiveUserMessage(userQuery, passport, content);
 
+  const supportsVision = isVisionSupported("custom_local", model);
   const priorMessages = history.slice(-16).map((m) => {
-    if (m.image) {
+    if (m.image && supportsVision) {
       return {
         role: m.role,
         content: [
@@ -943,8 +947,9 @@ async function streamCustomProvider(
   const systemText = getStaticSystemPrompt();
   const userText = buildActiveUserMessage(userQuery, passport, content);
 
+  const supportsVision = isVisionSupported(providerId, model);
   const priorMessages = history.slice(-16).map((m) => {
-    if (m.image) {
+    if (m.image && supportsVision) {
       return {
         role: m.role,
         content: [

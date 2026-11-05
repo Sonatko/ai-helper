@@ -22,6 +22,7 @@
         <div class="capsule-actions">
           <div id="badge-pill" class="badge-pill hidden">
             <span id="badge-pill-text"></span>
+            <span id="badge-dismiss-btn" class="badge-dismiss" title="Сбросить вложение">✕</span>
             <div id="badge-preview-popup" class="badge-preview-popup hidden">
               <img id="badge-preview-img" src="" alt="Preview" />
             </div>
@@ -73,6 +74,15 @@
         </footer>
       </section>
     </main>
+    <!-- Image Lightbox Modal for Full View -->
+    <div id="image-modal" class="image-modal hidden">
+      <div id="image-modal-backdrop" class="image-modal-backdrop"></div>
+      <div class="image-modal-container">
+        <button id="image-modal-close" class="image-modal-close" title="Закрыть (Esc)">✕</button>
+        <img id="image-modal-img" src="" alt="Full view screenshot" />
+      </div>
+    </div>
+
     <script type="module" src="./src/main.ts"></script>
   </body>
 </html>
