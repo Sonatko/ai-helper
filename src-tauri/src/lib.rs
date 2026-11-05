@@ -1,4 +1,4 @@
-
+﻿
 pub mod commands;
 pub mod storage;
 pub mod system;
@@ -50,6 +50,7 @@ pub fn run() {
             commands::window::open_settings_window,
             commands::window::close_settings_window,
             commands::window::open_external_url,
+            commands::window::get_env_var,
             commands::window::confirm_crop_region,
             commands::window::cancel_crop_region,
             commands::window::get_registered_hotkeys,

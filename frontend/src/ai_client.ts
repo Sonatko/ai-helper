@@ -1,4 +1,4 @@
-import {
+﻿import {
   DEFAULT_SYSTEM_PROMPT,
   recordUsage,
   loadCustomProviders,
@@ -10,6 +10,20 @@ import {
 } from "./settings";
 import type { WindowPassport } from "./main";
 import type { ProviderType } from "./settings";
+import { invoke } from "@tauri-apps/api/core";
+
+/**
+ * Resolves API key: checks localStorage first, then transparently checks local runtime .env
+ */
+async function getEffectiveApiKey(storageKey: string, envVarName: string): Promise<string> {
+  const localVal = localStorage.getItem(storageKey)?.trim();
+  if (localVal) return localVal;
+  try {
+    const envVal = await invoke<string | null>("get_env_var", { name: envVarName });
+    if (envVal?.trim()) return envVal.trim();
+  } catch {}
+  return "";
+}
 
 export interface HistoryMessage {
   role: "user" | "assistant";
@@ -397,9 +411,9 @@ async function streamAutoWithFailover(
   history: HistoryMessage[],
   callbacks: StreamCallbacks
 ): Promise<void> {
-  const geminiKey = localStorage.getItem("ai_helper_gemini_api_key") || "";
-  const groqKey = localStorage.getItem("ai_helper_groq_api_key") || "";
-  const openRouterKey = localStorage.getItem("ai_helper_openrouter_api_key") || "";
+  const geminiKey = await getEffectiveApiKey("ai_helper_gemini_api_key", "GEMINI_API_KEY");
+  const groqKey = await getEffectiveApiKey("ai_helper_groq_api_key", "GROQ_API_KEY");
+  const openRouterKey = await getEffectiveApiKey("ai_helper_openrouter_api_key", "OPENROUTER_API_KEY");
   const localUrl = localStorage.getItem("ai_helper_local_url") || "";
 
   type Runner = {
@@ -576,7 +590,7 @@ async function streamGroq(
   callbacks: StreamCallbacks,
   isAuto = false
 ): Promise<void> {
-  const apiKey = localStorage.getItem("ai_helper_groq_api_key") || "";
+  const apiKey = await getEffectiveApiKey("ai_helper_groq_api_key", "GROQ_API_KEY");
   if (!apiKey) {
     callbacks.onError("Ключ Groq не задан. Вставьте ключ в Настройках или переключитесь на общий пул.");
     return;
@@ -629,7 +643,7 @@ async function streamOpenRouter(
   callbacks: StreamCallbacks,
   isAuto = false
 ): Promise<void> {
-  const apiKey = localStorage.getItem("ai_helper_openrouter_api_key") || "";
+  const apiKey = await getEffectiveApiKey("ai_helper_openrouter_api_key", "OPENROUTER_API_KEY");
   if (!apiKey) {
     callbacks.onError("Ключ OpenRouter не задан. Вставьте ключ в Настройках или выберите общий пул.");
     return;
@@ -717,7 +731,7 @@ async function streamGemini(
   callbacks: StreamCallbacks,
   isAuto = false
 ): Promise<void> {
-  const apiKey = localStorage.getItem("ai_helper_gemini_api_key") || "";
+  const apiKey = await getEffectiveApiKey("ai_helper_gemini_api_key", "GEMINI_API_KEY");
   if (!apiKey) {
     callbacks.onError("Ключ Google AI Studio не задан. Вставьте ключ в Настройках или выберите общий пул.");
     return;

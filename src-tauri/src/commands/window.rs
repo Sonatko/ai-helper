@@ -306,3 +306,45 @@ pub fn open_external_url(url: String) -> Result<(), String> {
 
 
 
+
+
+/// Reads an optional environment variable from a local `.env` file or OS environment at runtime.
+///
+/// Why:
+/// Allows local testing with private keys in `.env` without baking secrets into release binaries
+/// or requiring standard release users to have configuration files.
+#[tauri::command]
+pub fn get_env_var(name: String) -> Option<String> {
+    if let Ok(val) = std::env::var(&name) {
+        let trimmed = val.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+
+    let candidate_paths = [
+        std::path::PathBuf::from(".env"),
+        std::path::PathBuf::from("../.env"),
+    ];
+
+    for path in &candidate_paths {
+        if let Ok(content) = std::fs::read_to_string(path) {
+            for line in content.lines() {
+                let trimmed = line.trim();
+                if trimmed.starts_with('#') || !trimmed.contains('=') {
+                    continue;
+                }
+                if let Some((k, v)) = trimmed.split_once('=') {
+                    if k.trim().eq_ignore_ascii_case(&name) {
+                        let val = v.trim().trim_matches('"').trim_matches('\'').to_string();
+                        if !val.is_empty() {
+                            return Some(val);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
