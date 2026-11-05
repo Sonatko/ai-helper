@@ -5,6 +5,33 @@
 
 ---
 
+## 📥 Скачать и быстрый запуск / Download & Quick Start
+
+> **Вам НЕ нужны Node.js, Rust или компиляция из исходников!**  
+> Если вы хотите просто пользоваться ассистентом, скачайте готовый установщик Windows:
+
+### 🚀 [Скачать AI Helper v0.1.2 для Windows (Установщик .exe)](https://github.com/Sonatko/ai-helper/releases/download/v0.1.2/AI.Helper_0.1.2_x64-setup.exe)
+*(Страница всех релизов и портативных версий: [GitHub Releases](https://github.com/Sonatko/ai-helper/releases/latest))*
+
+#### Как начать пользоваться:
+1. Скачайте файл **`AI.Helper_0.1.2_x64-setup.exe`** и запустите установку (она создаст ярлык).
+2. Запустите приложение — в системном трее Windows (возле часов) появится иконка.
+3. Нажмите в любом приложении:
+   - **`F7`** — смарт-вызов ассистента с контекстом активного окна.
+   - **`Alt + F7`** — сделать снимок фрагмента экрана.
+
+<details>
+<summary>🇬🇧 <b>English instructions</b></summary>
+
+> **You do NOT need Node.js, Rust, or any development tools.**  
+> Download the pre-built installer: **[AI.Helper_0.1.2_x64-setup.exe](https://github.com/Sonatko/ai-helper/releases/download/v0.1.2/AI.Helper_0.1.2_x64-setup.exe)**  
+> 1. Run the setup `.exe`.  
+> 2. Open AI Helper from the Start Menu or Desktop shortcut.  
+> 3. Press **`F7`** anywhere in Windows to summon the assistant.
+</details>
+
+---
+
 ## ⚡ The Core Philosophy: "Golden Context Triad"
 
 Unlike browser-based ChatGPT or heavy Electron apps that break your flow, AI Helper gathers full context automatically in under 4 milliseconds:

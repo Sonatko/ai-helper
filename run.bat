@@ -26,22 +26,14 @@ echo Hotkeys: F7 (Summon) / Alt+F7 (Snip Region).
 exit /b 0
 
 :fallback_dev
-echo [INFO] Standalone binary not found. Starting in Dev mode...
-
 where npm >nul 2>&1
 if %ERRORLEVEL% neq 0 (
-    echo [ERROR] Node.js / npm is not installed or not in PATH.
-    echo Please install Node.js from https://nodejs.org/ or run build.bat
-    pause
-    exit /b 1
+    goto no_dev_tools
 )
 
 where cargo >nul 2>&1
 if %ERRORLEVEL% neq 0 (
-    echo [ERROR] Rust / Cargo is not installed or not in PATH.
-    echo Please install Rust from https://rustup.rs/
-    pause
-    exit /b 1
+    goto no_dev_tools
 )
 
 if not exist "node_modules\" (
@@ -57,4 +49,23 @@ if not exist "frontend\node_modules\" (
 echo [INFO] Launching assistant with Tauri v2 dev-server...
 call npm run tauri dev
 pause
+exit /b 0
 
+:no_dev_tools
+echo ========================================================
+echo   [!] ВНИМАНИЕ: Вы скачали архив с исходным кодом!
+echo   [!] ATTENTION: You downloaded the source code ZIP!
+echo ========================================================
+echo.
+echo Для запуска из исходников требуются Node.js и Rust.
+echo Если вы хотите просто ПОЛЬЗОВАТЬСЯ AI Helper:
+echo ВАМ НЕ НУЖНО ничего собирать!
+echo.
+echo Скачайте готовый установщик Windows:
+echo https://github.com/Sonatko/ai-helper/releases/latest
+echo.
+echo Открываем страницу загрузки в вашем браузере...
+start https://github.com/Sonatko/ai-helper/releases/latest
+echo.
+pause
+exit /b 1
