@@ -43,15 +43,18 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: 'AI Helper ${{ github.ref_name }}'
           releaseBody: |
-            ## AI Helper — Нативный ассистент для Windows
-            
-            ### Варианты установки:
-            - **`AI-Helper_..._x64-setup.exe`** — автоматический установщик Windows (создает ярлык в меню «Пуск» и на Рабочем столе).
-            - **`ai-helper.exe` / `.zip`** — портативная версия без установки: скачал и сразу запустил.
-            
-            ### Горячие клавиши по умолчанию:
-            - **`F7`** — Смарт-вызов (анализ активного окна, паспорта и выделения).
-            - **`Alt+F7`** — Интерактивный снимок выбранной области экрана.
+            ## 🌍 AI Helper — Native Windows AI Assistant
+
+            ### 🇬🇧 English
+            - **`AI-Helper_..._x64-setup.exe`** — Recommended Windows NSIS installer (creates Start Menu & Desktop shortcuts).
+            - **`ai-helper.exe` / `.zip`** — Standalone portable edition: download and run directly.
+            - **Shortcuts:** `F7` — Smart Summon (active window context & screenshot) | `Alt+F7` — Screen Snip.
+
+            ---
+
+            ### 🇷🇺 Русский
+            - **`AI-Helper_..._x64-setup.exe`** — Рекомендуемый установщик Windows (создает ярлыки в меню «Пуск» и на Рабочем столе).
+            - **`ai-helper.exe` / `.zip`** — Портативная версия без установки: скачал и сразу запустил.
+            - **Горячие клавиши:** `F7` — Смарт-вызов (контекст активного окна и снимок) | `Alt+F7` — Снимок области экрана.
           releaseDraft: false
           prerelease: false
-
